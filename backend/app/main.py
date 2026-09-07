@@ -36,6 +36,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import Engine, text
 
 from app.api import deps
+from app.api.nodes import router as nodes_router
 from app.api.search import router as search_router
 from app.clients.cache import ResponseCache
 from app.clients.s2 import S2Client
@@ -98,6 +99,7 @@ def create_app(db_url: str | None = None) -> FastAPI:
         allow_headers=["*"],
     )
     application.include_router(search_router)
+    application.include_router(nodes_router)
 
     @application.get("/api/health")
     def health() -> dict[str, Any]:
