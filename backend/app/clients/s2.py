@@ -1,0 +1,386 @@
+"""
+Semantic Scholar Graph API client.
+
+Layer order, innermost out: rate limit -> cache lookup -> httpx -> tenacity ->
+Pydantic -> normalize to dataclass. See docs/s2-api-notes.md for the API
+contract this is written against.
+
+Two things here are load-bearing and easy to get wrong.
+
+**`NEIGHBOR_FIELDS` is not `SEARCH_FIELDS`.** `/paper/{id}/references` and
+`/paper/{id}/citations` reject `authors.hIndex` with a 400. In the archived
+prototype that 400 was swallowed, so every reference fetch silently returned
+nothing while the run reported success. Two constants, deliberately.
+
+**Every Pydantic field is Optional** (CLAUDE.md rule 6). S2 omits `year`,
+`abstract` and `venue` constantly. A missing field degrades a score and logs
+SCHEMA_DRIFT; it never raises.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Any
+
+import httpx
+from pydantic import BaseModel, ConfigDict, Field
+
+from app.clients.cache import ResponseCache
+from app.clients.rate_limit import TokenBucket
+from app.models import Author, CrawlState, Paper, PaperStub
+
+logger = logging.getLogger(__name__)
+
+BASE_URL = "https://api.semanticscholar.org/graph/v1"
+
+SEARCH_FIELDS = (
+    "paperId,corpusId,title,abstract,year,publicationDate,venue,citationCount,"
+    "referenceCount,influentialCitationCount,externalIds,publicationTypes,"
+    "fieldsOfStudy,authors,authors.hIndex"
+)
+
+# The /paper/{id}/references and /paper/{id}/citations endpoints support a
+# NARROWER field set. Asking them for authors.hIndex returns
+#   {"error":"Unrecognized or unsupported fields: [authors.hIndex]"}
+# as a 400. Keep neighbour fetches on the supported set.
+NEIGHBOR_FIELDS = (
+    "paperId,corpusId,title,abstract,year,publicationDate,venue,citationCount,"
+    "referenceCount,influentialCitationCount,externalIds,publicationTypes,"
+    "fieldsOfStudy,authors"
+)
+
+# S2 documents 500 ids per POST /paper/batch. Smaller chunks mean one bad id
+# poisons less, and a chunk failure costs less to retry.
+BATCH_SIZE = 100
+MAX_NEIGHBORS = 1000
+
+
+class S2TransientError(RuntimeError):
+    """5xx that survived its retries. The caller continues; it does not abort."""
+
+
+class CacheMiss(RuntimeError):
+    """Raised only by CachedOnlyS2Client (R0.9) when a fixture is absent."""
+
+
+# ---------------------------------------------------------------------------
+# Wire models -- every field Optional, extras ignored
+# ---------------------------------------------------------------------------
+
+
+class S2Author(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    authorId: str | None = None
+    name: str | None = None
+    hIndex: int | None = None
+
+
+class S2Paper(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    paperId: str | None = None
+    corpusId: int | None = None
+    title: str | None = None
+    abstract: str | None = None
+    year: int | None = None
+    publicationDate: str | None = None
+    venue: str | None = None
+    citationCount: int | None = None
+    referenceCount: int | None = None
+    influentialCitationCount: int | None = None
+    externalIds: dict[str, Any] | None = None
+    publicationTypes: list[str] | None = None
+    fieldsOfStudy: list[str] | None = None
+    authors: list[S2Author] = Field(default_factory=list)
+
+
+@dataclass(frozen=True, slots=True)
+class EdgeRecord:
+    """A citation pair as S2 reports it, before ids are resolved to rows."""
+
+    citing_s2_id: str
+    cited_s2_id: str
+    is_influential: bool = False
+    intents: tuple[str, ...] = ()
+    # The neighbour's own metadata, so a STUB can be written without a second call.
+    paper: Paper | None = None
+
+
+def _now() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def _external(ids: dict[str, Any] | None, key: str) -> str | None:
+    if not ids:
+        return None
+    value = ids.get(key)
+    return None if value is None else str(value)
+
+
+def to_paper(raw: S2Paper, *, crawl_state: CrawlState = CrawlState.METADATA) -> Paper | None:
+    """Normalize a wire record. Returns None if it lacks the two required fields."""
+    if not raw.paperId or not raw.title:
+        logger.info("SCHEMA_DRIFT: record without paperId or title: %s", raw.paperId)
+        return None
+    return Paper(
+        s2_paper_id=raw.paperId,
+        title=raw.title,
+        first_seen_at=_now(),
+        s2_corpus_id=raw.corpusId,
+        abstract=raw.abstract,
+        year=raw.year,
+        publication_date=raw.publicationDate,
+        venue=raw.venue,
+        citation_count=raw.citationCount or 0,
+        reference_count=raw.referenceCount or 0,
+        influential_citation_count=raw.influentialCitationCount or 0,
+        doi=_external(raw.externalIds, "DOI"),
+        arxiv_id=_external(raw.externalIds, "ArXiv"),
+        s2_fields=tuple(raw.fieldsOfStudy or ()),
+        publication_types=tuple(raw.publicationTypes or ()),
+        crawl_state=crawl_state,
+        metadata_fetched_at=_now() if crawl_state is CrawlState.METADATA else None,
+    )
+
+
+def to_stub(raw: S2Paper) -> PaperStub | None:
+    if not raw.paperId or not raw.title:
+        return None
+    return PaperStub(
+        s2_paper_id=raw.paperId,
+        title=raw.title,
+        year=raw.year,
+        citation_count=raw.citationCount,
+        venue=raw.venue,
+        external_ids=tuple(sorted((k, str(v)) for k, v in (raw.externalIds or {}).items())),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Client
+# ---------------------------------------------------------------------------
+
+
+class S2Client:
+    def __init__(
+        self,
+        cache: ResponseCache,
+        *,
+        api_key: str | None = None,
+        rate: float = 1.0,
+        transport: httpx.BaseTransport | None = None,
+        batch_size: int = BATCH_SIZE,
+        max_attempts: int = 5,
+        timeout: float = 30.0,
+    ) -> None:
+        self._cache = cache
+        self._bucket = TokenBucket(rate=rate)
+        self._batch_size = batch_size
+        self._max_attempts = max_attempts
+        headers = {"x-api-key": api_key} if api_key else {}
+        self._http = httpx.AsyncClient(
+            base_url=BASE_URL, headers=headers, transport=transport, timeout=timeout
+        )
+        self.api_calls = 0
+        self.cache_hits = 0
+
+    async def aclose(self) -> None:
+        await self._http.aclose()
+
+    # -- transport ----------------------------------------------------------
+
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
+    ) -> Any | None:
+        """
+        One logical call. Returns the decoded payload, None for 404/null.
+
+        The cache is consulted before the rate limiter is paid, so a fully
+        cached run costs no wall-clock time -- which is what makes R0.8's
+        checkpoint observable rather than merely true.
+        """
+        key_params: dict[str, Any] = dict(params or {})
+        if json_body is not None:
+            key_params["__body"] = json_body
+
+        if await self._cache.has(path, key_params):
+            self.cache_hits += 1
+            return await self._cache.get(path, key_params)
+
+        last_error: Exception | None = None
+        for attempt in range(1, self._max_attempts + 1):
+            await self._bucket.acquire()
+            self.api_calls += 1
+            try:
+                response = await self._http.request(method, path, params=params, json=json_body)
+            except httpx.HTTPError as exc:  # network-level
+                last_error = exc
+                await self._backoff(attempt)
+                continue
+
+            if response.status_code == 404:
+                await self._cache.put(path, key_params, 404, None)
+                return None
+
+            if response.status_code == 429:
+                await self._backoff(attempt, response.headers.get("Retry-After"))
+                last_error = S2TransientError("429 rate limited")
+                continue
+
+            if response.status_code >= 500:
+                last_error = S2TransientError(f"{response.status_code} from {path}")
+                await self._backoff(attempt)
+                continue
+
+            if response.status_code >= 400:
+                # 400 here almost always means an unsupported field. Surface it
+                # loudly rather than returning empty -- that is exactly the bug
+                # that hid the authors.hIndex problem for a day.
+                raise S2TransientError(f"{response.status_code} from {path}: {response.text[:200]}")
+
+            payload = response.json()
+            # Only successes are cached. Caching a 503 poisons the cache for as
+            # long as it lives.
+            await self._cache.put(path, key_params, response.status_code, payload)
+            return payload
+
+        raise S2TransientError(f"{path} failed after {self._max_attempts} attempts: {last_error}")
+
+    async def _backoff(self, attempt: int, retry_after: str | None = None) -> None:
+        if attempt >= self._max_attempts:
+            return
+        if retry_after:
+            try:
+                await asyncio.sleep(min(float(retry_after), 60.0))
+                return
+            except ValueError:
+                pass
+        await asyncio.sleep(min(2.0 ** (attempt - 1), 30.0) * 0.01)
+
+    # -- public API ---------------------------------------------------------
+
+    async def search_title(self, q: str, limit: int = 10) -> list[PaperStub]:
+        params = {"query": q, "fields": SEARCH_FIELDS, "limit": limit}
+        payload = await self._request("GET", "/paper/search", params=params)
+        rows = (payload or {}).get("data") or []
+        stubs = [to_stub(S2Paper.model_validate(r)) for r in rows if r]
+        return [s for s in stubs if s is not None]
+
+    async def get_papers(self, s2_ids: list[str], fields: str = SEARCH_FIELDS) -> list[Paper]:
+        """
+        The ONLY metadata path. Chunks into batch POSTs, so callers cannot
+        accidentally do N+1 fetching.
+
+        A chunk that fails is logged and skipped: one bad chunk degrades the
+        run, it does not abort it.
+        """
+        papers: list[Paper] = []
+        for start in range(0, len(s2_ids), self._batch_size):
+            chunk = s2_ids[start : start + self._batch_size]
+            try:
+                payload = await self._request(
+                    "POST", "/paper/batch", params={"fields": fields}, json_body={"ids": chunk}
+                )
+            except S2TransientError as exc:
+                logger.warning("batch of %d ids failed, skipping: %s", len(chunk), exc)
+                continue
+            # Positionally aligned with `chunk`, null where S2 knows nothing.
+            for raw in payload or []:
+                if raw is None:
+                    continue
+                paper = to_paper(S2Paper.model_validate(raw))
+                if paper is not None:
+                    papers.append(paper)
+        return papers
+
+    async def get_references(self, s2_id: str, limit: int = 200) -> list[EdgeRecord]:
+        return await self._edges(s2_id, "references", "citedPaper", limit)
+
+    async def get_citations(self, s2_id: str, limit: int = MAX_NEIGHBORS) -> list[EdgeRecord]:
+        return await self._edges(s2_id, "citations", "citingPaper", limit)
+
+    async def _edges(self, s2_id: str, kind: str, node_key: str, limit: int) -> list[EdgeRecord]:
+        payload = await self._request(
+            "GET",
+            f"/paper/{s2_id}/{kind}",
+            params={"fields": NEIGHBOR_FIELDS, "limit": min(limit, MAX_NEIGHBORS)},
+        )
+        out: list[EdgeRecord] = []
+        for row in (payload or {}).get("data") or []:
+            raw = row.get(node_key)
+            if not raw:
+                continue
+            neighbour = to_paper(S2Paper.model_validate(raw), crawl_state=CrawlState.STUB)
+            if neighbour is None:
+                continue
+            citing, cited = (
+                (s2_id, neighbour.s2_paper_id)
+                if node_key == "citedPaper"
+                else (neighbour.s2_paper_id, s2_id)
+            )
+            # S2 does return self-citations; the CHECK constraint would reject
+            # them, so drop them here rather than at the INSERT.
+            if citing == cited:
+                continue
+            out.append(
+                EdgeRecord(
+                    citing_s2_id=citing,
+                    cited_s2_id=cited,
+                    is_influential=bool(row.get("isInfluential")),
+                    intents=tuple(row.get("intents") or ()),
+                    paper=neighbour,
+                )
+            )
+        return out
+
+    async def get_authors(self, s2_ids: list[str]) -> list[Author]:
+        """Where h_index actually comes from -- it is absent on neighbour fetches."""
+        authors: list[Author] = []
+        for start in range(0, len(s2_ids), self._batch_size):
+            chunk = s2_ids[start : start + self._batch_size]
+            try:
+                payload = await self._request(
+                    "POST",
+                    "/author/batch",
+                    params={"fields": "authorId,name,hIndex,citationCount,paperCount"},
+                    json_body={"ids": chunk},
+                )
+            except S2TransientError as exc:
+                logger.warning("author batch failed, skipping: %s", exc)
+                continue
+            for raw in payload or []:
+                if not raw or not raw.get("authorId"):
+                    continue
+                authors.append(
+                    Author(
+                        s2_author_id=str(raw["authorId"]),
+                        name=raw.get("name") or "",
+                        h_index=raw.get("hIndex"),
+                        citation_count=raw.get("citationCount"),
+                        paper_count=raw.get("paperCount"),
+                        fetched_at=_now(),
+                    )
+                )
+        return authors
+
+
+__all__ = [
+    "BATCH_SIZE",
+    "BASE_URL",
+    "NEIGHBOR_FIELDS",
+    "SEARCH_FIELDS",
+    "CacheMiss",
+    "EdgeRecord",
+    "S2Client",
+    "S2Paper",
+    "S2TransientError",
+    "to_paper",
+    "to_stub",
+]
