@@ -23,7 +23,7 @@ from dataclasses import asdict, dataclass, field
 
 from sqlalchemy import Engine
 
-from app.clients.s2 import S2Client, S2TransientError
+from app.clients.s2 import CacheMiss, S2Client, S2TransientError
 from app.config import FiltersConfig, RankingConfig
 from app.repo import expansions as expansions_repo
 from app.repo import graph as graph_repo
@@ -57,6 +57,9 @@ class ExpansionResult:
     cache_hits: int = 0
     truncated: bool = False
     error: str | None = None
+    backward_fetched: int = 0
+    forward_fetched: int = 0
+    hub_skipped: int = 0
     ingest: IngestStats = field(default_factory=IngestStats)
 
 
@@ -82,7 +85,6 @@ async def expand(
         # that is what keeps depth bounded without an explicit hop counter.
         anchors = [n.paper_id for n in graph_repo.get_nodes(conn, session_id, ANCHOR_STATES)]
         anchor_papers = papers_repo.get_papers_by_ids(conn, anchors)
-        node_count = len(graph_repo.get_node_ids(conn, session_id))
 
     if not anchors:
         return _finish(engine, session_id, result, "no anchors in this session")
@@ -91,45 +93,69 @@ async def expand(
     # transaction would be nicer for lock duration, but the edges must be
     # visible to build_pool below, so each anchor commits as it completes.
     s2_by_id = {p.id: p.s2_paper_id for p in anchor_papers if p.id is not None}
+    citations_by_id = {p.id: p.citation_count for p in anchor_papers if p.id is not None}
+
     for anchor_id in anchors:
-        if client.api_calls - calls_at_start >= params.api_call_budget:
-            result.truncated = True
-            result.error = f"api_call_budget of {params.api_call_budget} reached"
-            break
         s2_id = s2_by_id.get(anchor_id)
         if s2_id is None:
             continue
-        try:
-            edges = await client.get_references(s2_id, limit=params.max_references)
-        except S2TransientError as exc:
-            # One anchor failing degrades the run; it does not end it.
-            logger.warning("ANCHOR_FETCH_FAILED paper_id=%s: %s", anchor_id, exc)
-            continue
 
-        with engine.begin() as conn:
-            for edge in edges:
-                if edge.paper is None:
-                    continue
-                if node_count >= params.max_nodes:
-                    result.truncated = True
-                    result.error = f"max_nodes of {params.max_nodes} reached"
-                    break
-                # admit=False: this pass stores papers, edges and filter
-                # verdicts. Admission is the budget step's job below, so that
-                # max_new is respected rather than every accepted paper landing
-                # in the graph.
-                ingest_neighbour(
-                    conn,
-                    session_id,
+        # Backward is always allowed: a reference list is bounded and
+        # deliberate. Forward is skipped for hubs -- expanding forward from a
+        # 191k-citation paper returns an arbitrary slice of a fifth of modern
+        # ML. Same threshold build_pool uses, so the two agree.
+        directions: list[tuple[str, int]] = [("BACKWARD", params.max_references)]
+        if citations_by_id.get(anchor_id, 0) > filters_cfg.forward_expand_max:
+            result.hub_skipped += 1
+            logger.info(
+                "HUB_SKIP_FORWARD paper_id=%s citations=%s",
+                anchor_id,
+                citations_by_id.get(anchor_id),
+            )
+        else:
+            directions.append(("FORWARD", params.max_citations))
+
+        for direction, limit in directions:
+            if client.api_calls - calls_at_start >= params.api_call_budget:
+                result.truncated = True
+                result.error = f"api_call_budget of {params.api_call_budget} reached"
+                break
+            try:
+                if direction == "BACKWARD":
+                    edges = await client.get_references(s2_id, limit=limit)
+                    result.backward_fetched += len(edges)
+                else:
+                    edges = await client.get_citations(s2_id, limit=limit)
+                    result.forward_fetched += len(edges)
+            except (S2TransientError, CacheMiss) as exc:
+                # One direction failing degrades the run; it does not end it.
+                logger.warning(
+                    "ANCHOR_FETCH_FAILED paper_id=%s direction=%s: %s",
                     anchor_id,
-                    edge.paper,
-                    "BACKWARD",
-                    filters_cfg,
-                    as_of_year,
-                    result.ingest,
-                    admit=False,
+                    direction,
+                    exc,
                 )
-                node_count += 1
+                continue
+
+            with engine.begin() as conn:
+                for edge in edges:
+                    if edge.paper is None:
+                        continue
+                    # admit=False: this pass stores papers, edges and verdicts.
+                    # Admission belongs to the budget step, so max_new is
+                    # respected rather than every accepted paper landing in the
+                    # graph.
+                    ingest_neighbour(
+                        conn,
+                        session_id,
+                        anchor_id,
+                        edge.paper,
+                        direction,
+                        filters_cfg,
+                        as_of_year,
+                        result.ingest,
+                        admit=False,
+                    )
         if result.truncated:
             break
 
