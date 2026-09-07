@@ -119,6 +119,13 @@ class PaperStub:
     citation_count: int | None = None
     venue: str | None = None
     external_ids: tuple[tuple[str, str], ...] = ()
+    # Byline names only, in order. `SEARCH_FIELDS` already asks S2 for authors,
+    # so this arrives free with every search response; a search list without it
+    # cannot distinguish two papers with near-identical titles, which is the
+    # common case for survey and follow-up papers. Names rather than
+    # (id, name) pairs because nothing persists a stub's authors -- only
+    # `Paper` reaches `paper_authors`.
+    authors: tuple[str, ...] = ()
 
     @property
     def title_norm(self) -> str:

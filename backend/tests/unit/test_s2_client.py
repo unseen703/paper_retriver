@@ -93,6 +93,11 @@ def make_client(cache: ResponseCache, handler: Any, **kw: Any) -> tuple[S2Client
         cache=cache,
         transport=httpx.MockTransport(rec),
         rate=1000.0,  # the limiter has its own tests; do not pay for it here
+        # Same reasoning for the retry ladder: production waits real seconds,
+        # these tests must not. It is a parameter rather than a constant so the
+        # default stays honest -- a hard-coded fast backoff shipped to
+        # production is what broke the fixture rebuild against a 429.
+        backoff_base=kw.pop("backoff_base", 0.001),
         **kw,
     )
     return client, rec

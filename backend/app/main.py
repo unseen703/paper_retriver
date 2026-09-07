@@ -35,6 +35,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import Engine, text
 
+from app.api import deps
+from app.api.search import router as search_router
+from app.clients.cache import ResponseCache
+from app.clients.s2 import S2Client
 from app.config import filters, settings
 from app.db import db_url as default_db_url
 from app.db import make_engine
@@ -45,14 +49,15 @@ logger = logging.getLogger(__name__)
 # Explicit, not "*". The Vite dev server's default port.
 DEV_ORIGINS = ["http://localhost:5173"]
 
-_engine: Engine | None = None
-
 
 def get_engine() -> Engine:
-    """The process-wide engine, opened by the lifespan handler."""
-    if _engine is None:  # pragma: no cover - lifespan always runs first
-        raise RuntimeError("engine not initialised; is the app running?")
-    return _engine
+    """
+    The process-wide engine, opened by the lifespan handler.
+
+    Kept as a re-export: the engine itself lives in `api.deps` so routers can
+    depend on it without importing this module, which would be a cycle.
+    """
+    return deps.get_engine()
 
 
 def create_app(db_url: str | None = None) -> FastAPI:
@@ -63,16 +68,22 @@ def create_app(db_url: str | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        global _engine
         configure_logging(level=settings.log_level)
         bind_session(session_id=settings.session_id)
-        _engine = make_engine(db_url or default_db_url())
+        engine = make_engine(db_url or default_db_url())
+        # One client for the process, not one per request: the rate limiter
+        # lives inside it, and a per-request client would give every request
+        # its own token bucket -- turning 1 req/sec into 1 req/sec *each*.
+        key = settings.s2_api_key.get_secret_value() if settings.s2_api_key else None
+        client = S2Client(cache=ResponseCache(engine), api_key=key, rate=settings.s2_rate_limit)
+        deps.set_runtime(engine, client)
         logger.info("api_startup config_version=%s", filters.config_version)
         try:
             yield
         finally:
-            _engine.dispose()
-            _engine = None
+            await client.aclose()
+            engine.dispose()
+            deps.clear_runtime()
 
     application = FastAPI(
         title="Citation-graph paper recommender",
@@ -86,6 +97,7 @@ def create_app(db_url: str | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    application.include_router(search_router)
 
     @application.get("/api/health")
     def health() -> dict[str, Any]:

@@ -177,6 +177,23 @@ def find_by_s2_id(conn: Connection, s2_paper_id: str) -> int | None:
     ).scalar()
 
 
+def find_ids_by_s2_ids(conn: Connection, s2_paper_ids: list[str]) -> dict[str, int]:
+    """
+    s2_paper_id -> local id, for the ids that exist. One query, not N.
+
+    Ids absent from the corpus are simply absent from the mapping, so a caller
+    reads a miss as "we have never seen this paper" without a second lookup.
+    """
+    if not s2_paper_ids:
+        return {}
+    placeholders = ",".join(f":s{i}" for i in range(len(s2_paper_ids)))
+    rows = conn.execute(
+        text(f"SELECT s2_paper_id, id FROM papers WHERE s2_paper_id IN ({placeholders})"),
+        {f"s{i}": v for i, v in enumerate(s2_paper_ids)},
+    )
+    return {row[0]: row[1] for row in rows}
+
+
 def upsert_paper(conn: Connection, paper: Paper) -> int:
     """Insert or update by `s2_paper_id` in one statement. Returns the id."""
     row = conn.execute(
