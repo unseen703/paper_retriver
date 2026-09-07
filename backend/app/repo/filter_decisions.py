@@ -113,6 +113,30 @@ def find_global_rejection(
     )
 
 
+def non_accepted_paper_ids(conn: Connection, session_id: int) -> set[int]:
+    """
+    Papers this session must not admit: anything whose latest verdict is not
+    ACCEPT, in either scope.
+
+    This is the third clause of BUILD.md's stage-4 exclusion query, alongside
+    "already in the graph" and "tombstoned". Leaving it out lets a rejected
+    paper back into the candidate pool, because a rejection stores a decision
+    row but no graph node -- so nothing else would exclude it.
+
+    QUARANTINE is excluded too: it means "hold for review" (R2.14), not
+    "admit quietly".
+    """
+    rows = conn.execute(
+        text(
+            "SELECT paper_id FROM filter_decisions"
+            " WHERE outcome != 'ACCEPT'"
+            "   AND (session_id IS NULL OR session_id = :session_id)"
+        ),
+        {"session_id": session_id},
+    )
+    return {row[0] for row in rows}
+
+
 def count_by_reason(conn: Connection, session_id: int | None = None) -> list[tuple[str, str, int]]:
     """(outcome, reason_code, n) for R2.14's review drawer."""
     rows = conn.execute(
@@ -126,4 +150,9 @@ def count_by_reason(conn: Connection, session_id: int | None = None) -> list[tup
     return [(r[0], r[1], r[2]) for r in rows]
 
 
-__all__ = ["count_by_reason", "find_global_rejection", "record"]
+__all__ = [
+    "count_by_reason",
+    "find_global_rejection",
+    "non_accepted_paper_ids",
+    "record",
+]

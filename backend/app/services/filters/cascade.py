@@ -100,7 +100,8 @@ def run_cascade(
         if not should_continue(decision):
             break
 
-    assert decision is not None  # noqa: S101 - `stages` is a non-empty literal
+    if decision is None:  # pragma: no cover - `stages` is a non-empty literal
+        raise RuntimeError("cascade produced no decision")
     decisions_repo.record(conn, session_id, paper_id, decision, cfg.config_version)
     return decision
 

@@ -77,9 +77,13 @@ FIXTURES: list[tuple[str, str]] = [
     ),
 ]
 
-# Fetch references for these only. References are the expensive call and most
-# tests need just one richly-connected example.
-WITH_REFERENCES = {"Attention Is All You Need"}
+# Fetch references for these only -- references are the expensive call.
+# BERT is here because BUILD.md's R1.11 and R1.13 verifications both seed BERT
+# and expand from it, so its bibliography has to be available offline.
+WITH_REFERENCES = {
+    "Attention Is All You Need",
+    "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding",
+}
 
 
 async def build() -> int:
