@@ -54,11 +54,17 @@ class VenueTier(StrEnum):
 
 DISCOVERED_VIA = frozenset({"BACKWARD", "FORWARD", "BOTH"})
 
+# ("doi", value) | ("arxiv", value) | ("title", norm, surname, year).
+# Declared here rather than in repo/ or services/ because BOTH build and
+# consume these keys, and two declarations drifted apart once already.
+CanonicalKey = tuple[str, str] | tuple[str, str, "str | None", "int | None"]
+
 _PUNCT = re.compile(r"[^\w\s]")
 _WS = re.compile(r"\s+")
 # Only a LEADING article is dropped. Removing every "a"/"the" would merge
 # genuinely different titles.
 _ARTICLES = frozenset({"a", "an", "the"})
+_NON_WORD = re.compile(r"[^\w]", re.UNICODE)
 
 
 def normalize_title(title: str) -> str:
@@ -83,6 +89,24 @@ def normalize_title(title: str) -> str:
     if len(words) > 1 and words[0] in _ARTICLES:
         words = words[1:]
     return " ".join(words)
+
+
+def surname_of(full_name: str) -> str:
+    """
+    Last whitespace-separated token, lowercased, punctuation stripped.
+
+    ONE implementation, shared by repo/papers.find_by_canonical_key (which
+    extracts it from a stored byline) and services/dedup.canonical_key (which
+    puts it into the key those lookups compare against). Two copies agreed on
+    the day they were written and nothing made them keep agreeing.
+
+    Crude on purpose: it only has to separate "LeCun" from "Hinton" well
+    enough to stop two same-titled papers merging. It is not a name parser.
+    """
+    parts = full_name.strip().split()
+    if not parts:
+        return ""
+    return _NON_WORD.sub("", parts[-1].lower())
 
 
 @dataclass(frozen=True, slots=True)

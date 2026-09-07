@@ -28,10 +28,15 @@ from typing import Any
 
 from sqlalchemy import Connection, text
 
-from app.models import CrawlState, Paper, PaperType, VenueTier, normalize_title
-
-# ("doi", value) | ("arxiv", value) | ("title", norm, surname, year)
-CanonicalKey = tuple[Any, ...]
+from app.models import (
+    CanonicalKey,
+    CrawlState,
+    Paper,
+    PaperType,
+    VenueTier,
+    normalize_title,
+    surname_of,
+)
 
 # Higher wins. A write may raise the crawl state but never lower it.
 _CRAWL_RANK = {
@@ -116,19 +121,6 @@ def _utcnow() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def surname_of(full_name: str) -> str:
-    """
-    Last whitespace-separated token, lowercased and stripped of punctuation.
-
-    Crude on purpose. It only has to separate "LeCun" from "Hinton" well enough
-    to stop two unrelated same-titled papers merging; it is not a name parser.
-    """
-    parts = full_name.strip().split()
-    if not parts:
-        return ""
-    return _WORD.sub("", parts[-1].lower())
-
-
 def _json_list(raw: str | None) -> tuple[str, ...]:
     if not raw:
         return ()
@@ -136,6 +128,18 @@ def _json_list(raw: str | None) -> tuple[str, ...]:
         return tuple(json.loads(raw))
     except (json.JSONDecodeError, TypeError):
         return ()
+
+
+def _parse_byline(raw: str | None) -> tuple[tuple[str, str], ...]:
+    """GROUP_CONCAT output back into (s2_author_id, name) pairs, byline order."""
+    if not raw:
+        return ()
+    out: list[tuple[str, str]] = []
+    for entry in raw.split(""):
+        author_id, _, name = entry.partition("")
+        if author_id and name:
+            out.append((author_id, name))
+    return tuple(out)
 
 
 def _row_to_paper(row: Any) -> Paper:
@@ -163,6 +167,7 @@ def _row_to_paper(row: Any) -> Paper:
         crawl_state=CrawlState(row[20]) if row[20] else CrawlState.STUB,
         first_seen_at=row[21],
         metadata_fetched_at=row[22],
+        authors=_parse_byline(row[23]) if len(row) > 23 else (),
     )
 
 
@@ -260,7 +265,17 @@ def set_authors(conn: Connection, paper_id: int, authors: list[tuple[str, str]])
 
 
 def get_papers_by_ids(conn: Connection, ids: list[int]) -> list[Paper]:
-    """Returns papers in the order requested; unknown ids are skipped."""
+    """
+    Returns papers in the order requested; unknown ids are skipped.
+
+    The byline comes back with them. Without it a Paper loaded here would key
+    differently under `canonical_key` than the same paper fetched from S2 --
+    `('title', norm, None, year)` against `('title', norm, 'lecun', year)` --
+    and every title-keyed dedup comparison across the two would silently miss.
+
+    One `GROUP_CONCAT` rather than a second query or a per-paper lookup: the
+    join stays inside the single statement the last review established.
+    """
     if not ids:
         return []
     found: dict[int, Paper] = {}
@@ -268,7 +283,15 @@ def get_papers_by_ids(conn: Connection, ids: list[int]) -> list[Paper]:
         chunk = ids[start : start + 500]
         placeholders = ",".join(f":p{i}" for i in range(len(chunk)))
         rows = conn.execute(
-            text(f"SELECT {_COLUMNS} FROM papers WHERE id IN ({placeholders})"),
+            text(
+                f"SELECT {_COLUMNS},"
+                # ORDER BY inside GROUP_CONCAT keeps byline order, which decides
+                # which surname reaches the key.
+                "  (SELECT GROUP_CONCAT(a.s2_author_id || '\x1f' || a.name, '\x1e')"
+                "     FROM paper_authors pa JOIN authors a ON a.id = pa.author_id"
+                "    WHERE pa.paper_id = papers.id ORDER BY pa.position) AS byline"
+                f" FROM papers WHERE id IN ({placeholders})"
+            ),
             {f"p{i}": v for i, v in enumerate(chunk)},
         )
         for row in rows:
