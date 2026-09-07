@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "paper-retriever-graph",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": ["graph_viz.py", "--port", "5057"],
+      "port": 5057
+    }
+  ]
+}

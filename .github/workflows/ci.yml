@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv python install 3.11
+      - run: uv sync
+      - name: Lint
+        run: |
+          uv run ruff check backend eval scripts
+          uv run ruff format --check backend eval scripts
+      - name: Typecheck
+        run: uv run mypy
+      - name: Test
+        run: uv run pytest

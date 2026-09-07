@@ -1,0 +1,22 @@
+data/*.db
+data/*.npy
+.env
+__pycache__
+node_modules
+
+# tooling caches
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.pyc
+
+# bulk local artefacts -- data/ holds ~2GB of PDFs, legacy/ holds the
+# prototype's on-disk API cache. Neither belongs in history.
+data/*.pdf
+*.sqlite3
+legacy/cache/
+*.zip
+
+# stray papers dropped in the repo root are not source
+*.pdf

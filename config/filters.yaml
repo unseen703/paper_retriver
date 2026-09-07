@@ -1,0 +1,26 @@
+year_floor: 2015
+
+paper_type_policy:
+  RESEARCH:  { action: accept }
+  SURVEY:    { action: accept_if, citation_count_min: 200, or_citations_per_year_min: 40 }
+  BENCHMARK: { action: quarantine }
+  DATASET:   { action: reject }
+  POSITION:  { action: quarantine }
+
+CORE_ALLOW:   [cs.LG, cs.AI, cs.CL, cs.NE, stat.ML, cs.MA]
+BORDERLINE:   [cs.IR, cs.CY, cs.DS, math.OC]
+APPLIED_DENY: [cs.CV, cs.RO, cs.SE, cs.HC, cs.CR, cs.DB, cs.NI, cs.SD,
+               "q-bio.*", "q-fin.*", "eess.*", "physics.*", "econ.*", "astro-ph.*"]
+
+CORE_VENUES: [NeurIPS, ICML, ICLR, ACL, EMNLP, NAACL, AAAI, IJCAI,
+              COLT, AISTATS, TMLR, JMLR, COLM, EACL, CoNLL]
+
+applied_keywords: [clinical, patient, radiolog, EHR, diagnosis, crop, agricultur,
+                   portfolio, stock return, credit risk, seismic, protein folding,
+                   molecul, drug discovery, wafer, churn, fraud detection]
+# keyword hits QUARANTINE only, never auto-reject
+
+forward_expand_max: 2000
+max_reference_fetch: 200
+max_nodes: 2000
+max_depth: 3

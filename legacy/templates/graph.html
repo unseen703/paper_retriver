@@ -1,0 +1,856 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Citation Graph Explorer</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #0f1117; color: #e2e8f0; display: flex; height: 100vh; overflow: hidden; }
+  #sidebar { width: 340px; min-width: 260px; background: #1a1f2e; border-right: 1px solid #2d3748; display: flex; flex-direction: column; overflow: hidden; }
+  #sidebar-header { padding: 14px 16px 10px; border-bottom: 1px solid #2d3748; }
+  #sidebar-header h1 { font-size: 15px; font-weight: 600; color: #90cdf4; }
+  #stats { padding: 8px 16px; font-size: 12px; color: #718096; border-bottom: 1px solid #2d3748; }
+
+  /* Expand/prune panel */
+  #expand-panel { padding: 12px 16px; border-bottom: 1px solid #2d3748; }
+  #expand-panel h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: #718096; margin-bottom: 8px; }
+  #hops-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 12px; color: #a0aec0; }
+  #hops-row input { width: 52px; background: #2d3748; border: 1px solid #4a5568; color: #e2e8f0; border-radius: 4px; padding: 3px 6px; font-size: 12px; }
+  #expand-refs-btn, #expand-cites-btn { width: 100%; padding: 8px; border-radius: 6px; border: none; background: #2b6cb0; color: #bee3f8; font-size: 13px; font-weight: 600; cursor: pointer; margin-top: 4px; }
+  #expand-refs-btn:hover:not(:disabled), #expand-cites-btn:hover:not(:disabled) { background: #3182ce; }
+  #expand-refs-btn:disabled, #expand-cites-btn:disabled { opacity: .55; cursor: not-allowed; }
+  .expand-note { font-size: 10px; color: #718096; margin: 3px 0 8px; }
+
+  /* Add paper panel */
+  #add-paper-panel { padding: 12px 16px; border-bottom: 1px solid #2d3748; }
+  #add-paper-panel h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: #718096; margin-bottom: 8px; }
+  #add-paper-row { display: flex; gap: 6px; }
+  #add-paper-input { flex: 1; background: #2d3748; border: 1px solid #4a5568; color: #e2e8f0; border-radius: 4px; padding: 5px 8px; font-size: 12px; }
+  #add-paper-input::placeholder { color: #718096; }
+  #add-paper-btn { padding: 5px 10px; border-radius: 5px; border: none; background: #2c7a7b; color: #e6fffa; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  #add-paper-btn:hover:not(:disabled) { background: #319795; }
+  #add-paper-btn:disabled { opacity: .55; cursor: not-allowed; }
+  #add-paper-status { font-size: 11px; margin-top: 5px; min-height: 14px; }
+
+  /* Search panel */
+  #search-panel { padding: 10px 16px; border-bottom: 1px solid #2d3748; }
+  #search-panel h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: #718096; margin-bottom: 6px; }
+  #search-row { display: flex; gap: 6px; }
+  #graph-search-input { flex: 1; background: #2d3748; border: 1px solid #4a5568; color: #e2e8f0; border-radius: 4px; padding: 5px 8px; font-size: 12px; }
+  #graph-search-input::placeholder { color: #718096; }
+  #search-clear-btn { padding: 5px 8px; border-radius: 4px; border: none; background: #4a5568; color: #e2e8f0; font-size: 11px; cursor: pointer; }
+  #search-matches { font-size: 11px; color: #a0aec0; margin-top: 4px; min-height: 14px; }
+
+  /* Neighbor sidebar */
+  #neighbor-sidebar { border-top: 1px solid #2d3748; padding: 12px 16px; max-height: 240px; overflow-y: auto; display: none; }
+  #neighbor-sidebar h3 { font-size: 12px; font-weight: 600; color: #90cdf4; margin-bottom: 8px; }
+  .neighbor-item { padding: 6px 0; border-bottom: 1px solid #2d3748; font-size: 12px; cursor: pointer; }
+  .neighbor-item:last-child { border-bottom: none; }
+  .neighbor-item:hover { color: #90cdf4; }
+  .neighbor-direction { display: inline-block; font-size: 10px; padding: 1px 5px; border-radius: 10px; margin-right: 5px; font-weight: 600; }
+  .dir-out { background: #2b6cb0; color: #bee3f8; }
+  .dir-in  { background: #276749; color: #9ae6b4; }
+  .neighbor-meta { font-size: 10px; color: #718096; }
+
+  /* Seeds & Liked panel */
+  #seeds-liked-panel { border-top: 1px solid #2d3748; padding: 12px 16px; max-height: 260px; overflow-y: auto; display: none; }
+  #seeds-liked-panel h3 { font-size: 12px; font-weight: 600; color: #fbd38d; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
+  .sl-item { display: flex; align-items: flex-start; justify-content: space-between; gap: 6px; padding: 6px 0; border-bottom: 1px solid #2d3748; font-size: 12px; }
+  .sl-item:last-child { border-bottom: none; }
+  .sl-info { flex: 1; min-width: 0; }
+  .sl-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #e2e8f0; cursor: pointer; }
+  .sl-title:hover { color: #90cdf4; }
+  .sl-meta { font-size: 10px; color: #718096; margin-top: 1px; }
+  .sl-remove-btn { flex-shrink: 0; padding: 2px 8px; border-radius: 4px; border: none; background: #742a2a; color: #fed7d7; font-size: 11px; font-weight: 600; cursor: pointer; }
+  .sl-remove-btn:hover { background: #9b2c2c; }
+
+  /* Ranked by Indegree panel */
+  #ranked-panel { border-top: 1px solid #2d3748; padding: 12px 16px; max-height: 320px; overflow-y: auto; display: none; }
+  #ranked-panel h3 { font-size: 12px; font-weight: 600; color: #90cdf4; margin-bottom: 8px; }
+  .rk-filters { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-bottom: 8px; }
+  .rk-filters label { display: flex; align-items: center; gap: 5px; font-size: 11px; color: #a0aec0; cursor: pointer; }
+  .rk-note { font-size: 10px; color: #718096; margin-bottom: 6px; }
+
+  /* Danger zone */
+  #danger-panel { padding: 12px 16px; border-bottom: 1px solid #2d3748; border-top: 2px solid #742a2a; }
+  #danger-panel h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: #fc8181; margin-bottom: 8px; }
+  #clear-rebuild-btn { width: 100%; padding: 8px; border-radius: 6px; border: 1px solid #9b2c2c; background: #742a2a; color: #fed7d7; font-size: 12px; font-weight: 600; cursor: pointer; }
+  #clear-rebuild-btn:hover:not(:disabled) { background: #9b2c2c; }
+  #clear-rebuild-btn:disabled { opacity: .55; cursor: not-allowed; }
+  #clear-rebuild-status { font-size: 11px; color: #a0aec0; margin-top: 6px; min-height: 14px; }
+
+  /* Notification bar */
+  #notify-bar { display: none; padding: 8px 16px; background: #744210; color: #fef3c7; font-size: 12px; border-bottom: 1px solid #d97706; }
+
+  /* Score filter */
+  #score-filter { padding: 12px 16px; border-bottom: 1px solid #2d3748; }
+  #score-filter label { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: #718096; display: flex; justify-content: space-between; }
+  #score-filter input[type=range] { width: 100%; margin: 6px 0 2px; accent-color: #4299e1; cursor: pointer; }
+  #score-hint { font-size: 11px; color: #718096; }
+
+  /* Legend */
+  #legend { padding: 10px 16px; border-bottom: 1px solid #2d3748; }
+  #legend h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: #718096; margin-bottom: 6px; }
+  .legend-item { display: flex; align-items: center; gap: 8px; font-size: 12px; margin-bottom: 3px; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+  /* Detail panel */
+  #detail-panel { flex: 1; overflow-y: auto; padding: 14px 16px; }
+  #detail-panel h3 { font-size: 13px; font-weight: 600; color: #90cdf4; margin-bottom: 10px; }
+  .detail-title { font-size: 14px; font-weight: 600; line-height: 1.4; margin-bottom: 8px; }
+  .detail-meta { font-size: 12px; color: #a0aec0; margin-bottom: 5px; }
+  .detail-abstract { font-size: 12px; color: #cbd5e0; line-height: 1.6; margin-top: 10px; max-height: 180px; overflow-y: auto; }
+
+  /* Like / Dislike */
+  #label-actions { display: flex; gap: 8px; margin: 10px 0; }
+  .label-btn { flex: 1; padding: 7px 0; border-radius: 6px; border: none; font-size: 13px; font-weight: 600; cursor: pointer; transition: opacity .15s, transform .1s; }
+  .label-btn:active { transform: scale(.97); }
+  .like-btn   { background: #276749; color: #9ae6b4; }
+  .like-btn.active    { background: #48bb78; color: #fff; }
+  .like-btn:hover     { opacity: .85; }
+  .dislike-btn { background: #742a2a; color: #fed7d7; }
+  .dislike-btn.active { background: #fc8181; color: #fff; }
+  .dislike-btn:hover  { opacity: .85; }
+
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; margin-right: 4px; }
+  .badge-seed     { background: #2b6cb0; color: #bee3f8; }
+  .badge-liked    { background: #276749; color: #9ae6b4; }
+  .badge-disliked { background: #742a2a; color: #fed7d7; }
+
+  /* Canvas */
+  #canvas-wrap { flex: 1; position: relative; }
+  svg { width: 100%; height: 100%; }
+  .link { stroke: #4a5568; stroke-opacity: 0.5; stroke-width: 1; }
+  .node circle { stroke: #1a1f2e; stroke-width: 1.5; cursor: pointer; transition: stroke .15s, opacity .2s; }
+  .node circle:hover { stroke: #fff; stroke-width: 2; }
+  .node.selected circle { stroke: #f6e05e; stroke-width: 2.5; }
+  .node text { fill: #cbd5e0; font-size: 9px; pointer-events: none; }
+  /* Neighborhood highlight */
+  .node.dimmed circle { opacity: 0.10; }
+  .node.dimmed text   { opacity: 0.10; }
+  .link.dimmed        { stroke-opacity: 0.06; }
+  .node.neighbor circle { stroke: #f6e05e; stroke-width: 2.5; opacity: 1; }
+
+  #controls { position: absolute; top: 12px; right: 12px; display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; max-width: 70%; }
+  .btn { background: #2d3748; border: 1px solid #4a5568; color: #e2e8f0; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; }
+  .btn:hover { background: #4a5568; }
+  .btn.active { background: #2b6cb0; border-color: #63b3ed; color: #bee3f8; }
+  #loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: #0f1117; font-size: 14px; color: #718096; }
+  #toast { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); background: #2d3748; color: #e2e8f0; padding: 8px 16px; border-radius: 8px; font-size: 13px; display: none; pointer-events: none; }
+</style>
+</head>
+<body>
+
+<div id="sidebar">
+  <div id="sidebar-header"><h1>Citation Graph Explorer</h1></div>
+  <div id="stats">Loading…</div>
+
+  <!-- Expand / Prune -->
+  <div id="expand-panel">
+    <h3>Expand</h3>
+    <button id="expand-refs-btn" onclick="expandReferences()">
+      &#9658; Expand references
+    </button>
+    <div class="expand-note">Adds every reference of your seed &amp; liked papers.</div>
+    <div id="hops-row">
+      <span>Max new papers:</span>
+      <input type="number" id="max-papers-input" value="300" min="1" max="20000">
+    </div>
+    <button id="expand-cites-btn" onclick="expandCitations()">
+      &#9658; Expand citations
+    </button>
+    <div class="expand-note">Budget above is split equally across seed papers.</div>
+  </div>
+
+  <!-- Search within graph -->
+  <div id="search-panel">
+    <h3>Search Graph</h3>
+    <div id="search-row">
+      <input id="graph-search-input" type="text" placeholder="Filter by title…"
+             oninput="searchGraph(this.value)">
+      <button id="search-clear-btn" onclick="searchGraph('',true)">✕</button>
+    </div>
+    <div id="search-matches"></div>
+  </div>
+
+  <!-- Add paper by title -->
+  <div id="add-paper-panel">
+    <h3>Add Paper by Title</h3>
+    <div id="add-paper-row">
+      <input id="add-paper-input" type="text" placeholder="e.g. Attention Is All You Need"
+             onkeydown="if(event.key==='Enter') addPaperByTitle()">
+      <button id="add-paper-btn" onclick="addPaperByTitle()">Add</button>
+    </div>
+    <div id="add-paper-status"></div>
+  </div>
+
+  <!-- Danger zone -->
+  <div id="danger-panel">
+    <h3>Danger Zone</h3>
+    <button id="clear-rebuild-btn" onclick="clearAndRebuild()">
+      &#9888; Clear network
+    </button>
+    <div id="clear-rebuild-status"></div>
+  </div>
+
+  <!-- Notification bar (shown while expansion runs) -->
+  <div id="notify-bar">
+    &#9203; Expansion in progress — graph shows current data. Results will refresh automatically.
+    <span id="notify-detail"></span>
+  </div>
+
+  <!-- Score filter -->
+  <div id="score-filter">
+    <label>
+      <span>Min visibility score (unlabeled)</span>
+      <span id="score-val">0.00</span>
+    </label>
+    <input type="range" id="score-slider" min="0" max="1" step="0.01" value="0">
+    <div id="score-hint">Slide right → show only high-relevance candidates</div>
+  </div>
+
+  <!-- Legend -->
+  <div id="legend">
+    <h3>Legend</h3>
+    <div class="legend-item"><div class="legend-dot" style="background:#4299e1"></div> Seed</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#48bb78"></div> Liked</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#fc8181"></div> Disliked</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#a0aec0"></div> Unlabeled</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#d69e2e"></div> Skipped</div>
+    <div style="margin-top:6px;font-size:11px;color:#718096">Node size ∝ √citation count</div>
+  </div>
+
+  <div id="detail-panel"><h3>Click a node to see details</h3></div>
+  <div id="neighbor-sidebar"></div>
+  <div id="seeds-liked-panel"></div>
+  <div id="ranked-panel"></div>
+</div>
+
+<div id="canvas-wrap">
+  <div id="loading">Loading graph…</div>
+  <div id="controls">
+    <button class="btn" onclick="resetZoom()">Reset zoom</button>
+    <button class="btn" id="label-hide-btn" onclick="hideAllLabels()">Hide labels</button>
+    <button class="btn" id="label-all-btn" onclick="showAllLabels()">Show all labels</button>
+    <button class="btn active" id="label-relevant-btn" onclick="showRelevantLabels()">Show relevant labels</button>
+    <button class="btn" onclick="loadSeedsLiked()" style="background:#744210;color:#fef3c7;">Seeds &amp; Liked</button>
+    <button class="btn" onclick="loadRankedPanel()" style="background:#2c5282;color:#bee3f8;">Ranked by Indegree</button>
+  </div>
+  <div id="toast"></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<script>
+// ---- constants ----
+const COLOR = { seed:"#4299e1", liked:"#48bb78", disliked:"#fc8181", skipped:"#d69e2e" };
+const LABELED = new Set(["seed","liked","disliked","skipped"]);
+const LABEL_SCORE_THRESHOLD = 0.35;
+
+function nodeColor(d) { return COLOR[d.label] || "#a0aec0"; }
+function nodeRadius(d) { return Math.max(5, Math.min(28, 4 + Math.sqrt(d.citation_count||0)*0.35)); }
+
+// ---- state ----
+let svg, zoomBehavior, gMain, simulation;
+let _labels=null, _nodeG=null, _linkG=null;
+let _selectedId=null;   // paper currently selected from a list or the graph
+let _allNodes=[], _scoreThreshold=0;
+let _labelMode="relevant"; // "hidden" | "all" | "relevant"
+let _pollTimer=null;
+
+// ---- toast ----
+function toast(msg) {
+  const el=document.getElementById("toast");
+  el.textContent=msg; el.style.display="block";
+  clearTimeout(el._t);
+  el._t=setTimeout(()=>{ el.style.display="none"; },2500);
+}
+
+// ---- score slider ----
+document.getElementById("score-slider").addEventListener("input", function() {
+  _scoreThreshold=parseFloat(this.value);
+  document.getElementById("score-val").textContent=_scoreThreshold.toFixed(2);
+  applyScoreFilter();
+});
+
+function isVisible(d) {
+  if (LABELED.has(d.label)) return true;
+  return (d.score||0)>=_scoreThreshold;
+}
+function applyScoreFilter() {
+  if (!_nodeG) return;
+  const vis=new Set();
+  _nodeG.each(function(d){ const show=isVisible(d); d3.select(this).style("display",show?null:"none"); if(show) vis.add(d.id); });
+  _linkG && _linkG.each(function(d){
+    const s=typeof d.source==="object"?d.source.id:d.source;
+    const t=typeof d.target==="object"?d.target.id:d.target;
+    d3.select(this).style("display", vis.has(s)&&vis.has(t)?null:"none");
+  });
+  document.getElementById("stats").textContent=
+    `${vis.size}/${_allNodes.length} papers visible · threshold ${_scoreThreshold.toFixed(2)}`;
+}
+
+// ---- expansions (references take no budget, citations do) ----
+const REFS_LABEL  = "▶ Expand references";
+const CITES_LABEL = "▶ Expand citations";
+
+function expandReferences() {
+  return runExpansion("/api/graph/expand-references", "expand-refs-btn", REFS_LABEL, {});
+}
+
+function expandCitations() {
+  const maxPapers = parseInt(document.getElementById("max-papers-input").value) || 300;
+  return runExpansion("/api/graph/expand-citations", "expand-cites-btn", CITES_LABEL,
+                      {max_papers: maxPapers});
+}
+
+async function runExpansion(url, btnId, label, body) {
+  const btn = document.getElementById(btnId);
+  btn.disabled = true;
+  btn.textContent = "Starting…";
+
+  try {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(body)
+    });
+    const data = await r.json();
+
+    if (data.status === "done") {
+      toast(data.message || "Nothing to expand from.");
+      await refreshGraph();
+      btn.disabled = false;
+      btn.textContent = label;
+      return;
+    }
+
+    const notifyBar = document.getElementById("notify-bar");
+    const notifyDetail = document.getElementById("notify-detail");
+    notifyBar.style.display = "block";
+    notifyDetail.textContent = data.rebuilding
+      ? " (network was empty — restoring seeds, then expanding…)"
+      : ` (expanding ${data.kind} from ${data.seed_count} paper(s)…)`;
+    btn.textContent = "⏳ Expanding…";
+
+    pollStatus(data.job_id, btn, notifyBar, label);
+  } catch (e) {
+    toast("Error: " + e.message);
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+}
+
+async function clearAndRebuild() {
+  if (!confirm(
+    "This permanently deletes ALL papers, edges, and metrics in the current " +
+    "network. Nothing is restored automatically -- use \"Prune disliked & " +
+    "expand from liked/seed\" afterward to rebuild from your seed titles file. " +
+    "This cannot be undone. Continue?"
+  )) return;
+
+  const btn = document.getElementById("clear-rebuild-btn");
+  const statusEl = document.getElementById("clear-rebuild-status");
+  const restoreLabel = "⚠ Clear network";
+  btn.disabled = true;
+  btn.textContent = "Clearing…";
+  statusEl.textContent = "";
+
+  try {
+    const r = await fetch("/api/graph/clear-and-rebuild", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({})
+    });
+    const data = await r.json();
+
+    if (!r.ok) {
+      toast("Error: " + (data.error || "unknown"));
+      btn.disabled = false;
+      btn.textContent = restoreLabel;
+      return;
+    }
+
+    toast("Network cleared. Use \"Prune disliked & expand\" to rebuild.");
+    await refreshGraph();
+  } catch (e) {
+    toast("Error: " + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = restoreLabel;
+    statusEl.textContent = "";
+  }
+}
+
+function pollStatus(jobId, btn, notifyBar, restoreText) {
+  restoreText = restoreText || "▶ Prune disliked & expand from liked/seed";
+  clearInterval(_pollTimer);
+  _pollTimer=setInterval(async ()=>{
+    try {
+      const r=await fetch(`/api/expand/status/${jobId}`);
+      const job=await r.json();
+      if (job.status==="done") {
+        clearInterval(_pollTimer);
+        notifyBar.style.display="none";
+        btn.disabled=false;
+        btn.textContent=restoreText;
+        toast(`Expansion complete! Added ${job.added} new paper(s).`);
+        await refreshGraph();
+      } else if (job.status==="error") {
+        clearInterval(_pollTimer);
+        notifyBar.style.display="none";
+        btn.disabled=false;
+        btn.textContent=restoreText;
+        toast("Expansion error: "+(job.error||"unknown"));
+      }
+    } catch(e) { /* network hiccup — keep polling */ }
+  }, 3000);
+}
+
+// ---- graph init & refresh ----
+async function init() {
+  const r=await fetch("/api/graph");
+  const data=await r.json();
+  _allNodes=data.nodes;
+  document.getElementById("loading").style.display="none";
+  document.getElementById("stats").textContent=`${data.nodes.length} papers · ${data.links.length} edges`;
+  renderGraph(data);
+}
+
+async function refreshGraph() {
+  const r=await fetch("/api/graph");
+  const data=await r.json();
+  _allNodes=data.nodes;
+
+  // Tear down and rebuild D3 from scratch (cleanest for large topology changes)
+  if (simulation) simulation.stop();
+  gMain.selectAll("*").remove();
+  buildForce(data);
+  applyScoreFilter();
+}
+
+function renderGraph(data) {
+  const wrap=document.getElementById("canvas-wrap");
+  const W=wrap.clientWidth, H=wrap.clientHeight;
+  svg=d3.select(wrap).append("svg");
+  zoomBehavior=d3.zoom().scaleExtent([0.05,8]).on("zoom",e=>gMain.attr("transform",e.transform));
+  svg.call(zoomBehavior);
+  svg.on("click.highlight", (e) => {
+    if (!e.target.closest || !e.target.closest("g.node")) clearHighlight();
+  });
+  gMain=svg.append("g");
+  svg.append("defs").append("marker")
+    .attr("id","arrow").attr("viewBox","0 -4 8 8").attr("refX",14)
+    .attr("markerWidth",6).attr("markerHeight",6).attr("orient","auto")
+    .append("path").attr("d","M0,-4L8,0L0,4").attr("fill","#4a5568");
+  buildForce(data, W, H);
+}
+
+function buildForce({nodes, links}, W, H) {
+  _linkG=gMain.append("g").selectAll("line").data(links).enter()
+    .append("line").attr("class","link").attr("marker-end","url(#arrow)");
+
+  _nodeG=gMain.append("g").selectAll("g.node").data(nodes).enter()
+    .append("g").attr("class","node")
+    .on("click",function(e,d){ e.stopPropagation(); selectNode(this,d); })
+    .call(d3.drag()
+      .on("start",(e,d)=>{ if(!e.active) simulation.alphaTarget(0.05).restart(); d.fx=d.x; d.fy=d.y; })
+      .on("drag", (e,d)=>{ d.fx=e.x; d.fy=e.y; })
+      .on("end",  (e,d)=>{ if(!e.active) simulation.alphaTarget(0); d.fx=null; d.fy=null; }));
+
+  _nodeG.append("circle").attr("r",nodeRadius).attr("fill",nodeColor);
+  _labels=_nodeG.append("text")
+    .attr("dy",d=>nodeRadius(d)+10).attr("text-anchor","middle")
+    .text(d=>(d.title||"").slice(0,30)+((d.title||"").length>30?"…":""))
+    .style("display",d=>_labelVisible(d)?null:"none");
+
+  const cx=W?W/2:400, cy=H?H/2:300;
+  simulation=d3.forceSimulation(nodes)
+    .force("link",d3.forceLink(links).id(d=>d.id).distance(150).strength(0.3))
+    .force("charge",d3.forceManyBody().strength(-400))
+    .force("center",d3.forceCenter(cx,cy))
+    .force("collision",d3.forceCollide().radius(d=>nodeRadius(d)+4))
+    .velocityDecay(0.7)
+    .on("tick",()=>{
+      _linkG.attr("x1",d=>d.source.x).attr("y1",d=>d.source.y)
+             .attr("x2",d=>d.target.x).attr("y2",d=>d.target.y);
+      _nodeG.attr("transform",d=>`translate(${d.x},${d.y})`);
+    });
+}
+
+// ---- node detail ----
+async function selectNode(el,d) {
+  document.querySelectorAll("g.node").forEach(n=>n.classList.remove("selected"));
+  el.classList.add("selected");
+  highlightNeighborhood(d.id);
+  const r=await fetch(`/api/paper/${encodeURIComponent(d.id)}`);
+  renderDetail(await r.json(), d);
+  loadNeighborSidebar(d.id);
+}
+
+function renderDetail(p, nodeData) {
+  const lbl=p.label;
+  const badge=lbl?`<span class="badge badge-${lbl}">${lbl}</span>`:"";
+  document.getElementById("detail-panel").innerHTML=`
+    <div class="detail-title">${esc(p.title||p.paper_id)}</div>
+    ${badge}
+    <div id="label-actions">
+      <button class="label-btn like-btn ${lbl==="liked"?"active":""}"
+              onclick="setLabel('${p.paper_id}','liked')">&#128077; Like</button>
+      <button class="label-btn dislike-btn"
+              onclick="dislikeAndRemove('${p.paper_id}')">&#128078; Dislike &amp; remove</button>
+    </div>
+    <div class="detail-meta">&#128197; ${p.year||"n/a"} &nbsp;|&nbsp; &#128214; ${p.citation_count??0} citations</div>
+    ${p.venue?`<div class="detail-meta">&#127963; ${esc(p.venue)}</div>`:""}
+    ${p.authors&&p.authors.length?`<div class="detail-meta">&#128100; ${esc(p.authors.slice(0,3).join(", "))}${p.authors.length>3?" et al.":""}</div>`:""}
+    ${p.distance_from_seed!=null?`<div class="detail-meta">&#128279; Hop distance: ${p.distance_from_seed}</div>`:""}
+    ${nodeData?`<div class="detail-meta">&#11088; Relevance score: ${(nodeData.score||0).toFixed(3)}</div>`:""}
+    ${p.abstract?`<div class="detail-abstract">${esc(p.abstract)}</div>`:""}
+  `;
+}
+
+// ---- like / dislike ----
+async function setLabel(pid, newLabel) {
+  const panel=document.getElementById("detail-panel");
+  const isActive = newLabel==="liked"
+    ? panel.querySelector(".like-btn")?.classList.contains("active")
+    : panel.querySelector(".dislike-btn")?.classList.contains("active");
+  const label=isActive?null:newLabel;
+
+  const r=await fetch(`/api/paper/${encodeURIComponent(pid)}/label`,{
+    method:"POST", headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({label})
+  });
+  if(!r.ok){ toast("Error updating label"); return; }
+  const data=await r.json();
+
+  const exploredNew = data.explored && (data.explored.refs_added>0 || data.explored.cites_added>0);
+  if (exploredNew) {
+    // Liking this paper added new reference/citation nodes -- rebuild from
+    // the graph API so they actually show up instead of staying invisible.
+    await refreshGraph();
+  } else {
+    _nodeG&&_nodeG.each(function(d){
+      if(d.id!==pid) return;
+      d.label=data.label;
+      d3.select(this).select("circle").attr("fill",nodeColor(d));
+    });
+    const nd=_allNodes.find(n=>n.id===pid);
+    if(nd) nd.label=data.label;
+  }
+
+  const dr=await fetch(`/api/paper/${encodeURIComponent(pid)}`);
+  const nd=_allNodes.find(n=>n.id===pid);
+  renderDetail(await dr.json(), nd);
+  toast(label?`Marked as ${label}`:"Label cleared");
+  applyScoreFilter();
+}
+
+// ---- neighborhood highlight ----
+let _highlightedId = null;
+
+function highlightNeighborhood(pid) {
+  if (_highlightedId === pid) { clearHighlight(); return; }
+  _highlightedId = pid;
+
+  const neighborIds = new Set();
+  if (_linkG) {
+    _linkG.each(function() {
+      const lk = d3.select(this).datum();
+      const s = typeof lk.source === "object" ? lk.source.id : lk.source;
+      const t = typeof lk.target === "object" ? lk.target.id : lk.target;
+      if (s === pid) neighborIds.add(t);
+      if (t === pid) neighborIds.add(s);
+    });
+  }
+
+  _nodeG && _nodeG.each(function(d) {
+    const el = d3.select(this);
+    if (d.id === pid) {
+      el.classed("dimmed", false).classed("neighbor", false);
+    } else if (neighborIds.has(d.id)) {
+      el.classed("dimmed", false).classed("neighbor", true);
+    } else {
+      el.classed("dimmed", true).classed("neighbor", false);
+    }
+  });
+
+  _linkG && _linkG.each(function() {
+    const lk = d3.select(this).datum();
+    const s = typeof lk.source === "object" ? lk.source.id : lk.source;
+    const t = typeof lk.target === "object" ? lk.target.id : lk.target;
+    d3.select(this).classed("dimmed", s !== pid && t !== pid);
+  });
+}
+
+function clearHighlight() {
+  _highlightedId = null;
+  if (_nodeG) _nodeG.classed("dimmed", false).classed("neighbor", false);
+  if (_linkG) _linkG.classed("dimmed", false);
+}
+
+// ---- add paper by title ----
+async function addPaperByTitle() {
+  const input = document.getElementById("add-paper-input");
+  const btn   = document.getElementById("add-paper-btn");
+  const status = document.getElementById("add-paper-status");
+  const title = input.value.trim();
+  if (!title) { status.textContent = "Please enter a title."; status.style.color="#fc8181"; return; }
+
+  btn.disabled = true;
+  status.style.color = "#a0aec0";
+  status.textContent = "Searching Semantic Scholar…";
+
+  try {
+    const r = await fetch("/api/paper/add-by-title", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({title})
+    });
+    const data = await r.json();
+    if (!r.ok) {
+      status.style.color = "#fc8181";
+      status.textContent = data.error || "Not found.";
+    } else {
+      status.style.color = "#9ae6b4";
+      status.textContent = `Added: "${data.title}" (${data.year||"?"})`;
+      input.value = "";
+      await refreshGraph();
+      toast(`Added seed: ${data.title}`);
+    }
+  } catch(e) {
+    status.style.color = "#fc8181";
+    status.textContent = "Network error.";
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ---- search within graph ----
+let _searchHighlightSet = new Set();
+
+function searchGraph(query, clear=false) {
+  if (clear) { document.getElementById("graph-search-input").value = ""; query=""; }
+  const q = query.toLowerCase().trim();
+  _searchHighlightSet.clear();
+  document.getElementById("search-matches").textContent = "";
+  if (!q || !_nodeG) { _nodeG && _nodeG.classed("dimmed", false).classed("neighbor", false); return; }
+
+  fetch(`/api/paper/search?q=${encodeURIComponent(q)}`)
+    .then(r=>r.json())
+    .then(data=>{
+      const matchIds = new Set(data.papers.map(p=>p.paper_id));
+      _searchHighlightSet = matchIds;
+      document.getElementById("search-matches").textContent =
+        matchIds.size ? `${matchIds.size} match(es)` : "No matches";
+      _nodeG.each(function(d){
+        const el=d3.select(this);
+        if (matchIds.has(d.id)) { el.classed("neighbor",true).classed("dimmed",false); }
+        else { el.classed("neighbor",false).classed("dimmed", matchIds.size>0); }
+      });
+      _linkG && _linkG.classed("dimmed", matchIds.size>0);
+    })
+    .catch(()=>{});
+}
+
+// ---- neighbor sidebar ----
+async function loadNeighborSidebar(paperId) {
+  const panel = document.getElementById("neighbor-sidebar");
+  panel.style.display = "block";
+  panel.innerHTML = "<h3>Neighbors</h3><div style='font-size:12px;color:#718096'>Loading…</div>";
+  try {
+    const r = await fetch(`/api/paper/${encodeURIComponent(paperId)}/neighbors`);
+    const data = await r.json();
+    const neighbors = data.neighbors || [];
+    if (!neighbors.length) {
+      panel.innerHTML = "<h3>Neighbors</h3><div style='font-size:12px;color:#718096'>No direct connections.</div>";
+      return;
+    }
+    const sorted = [...neighbors].sort((a,b)=>(b.citation_count||0)-(a.citation_count||0));
+    panel.innerHTML = `<h3>Neighbors (${sorted.length})</h3>` +
+      sorted.map(n=>`
+        <div class="neighbor-item" onclick="selectNodeById('${n.paper_id}')">
+          <span class="neighbor-direction ${n.direction==='out'?'dir-out':'dir-in'}">${n.direction==='out'?'cites':'cited by'}</span>
+          ${esc(n.title||n.paper_id)}
+          <div class="neighbor-meta">${n.year||''} · ${n.citation_count||0} citations</div>
+        </div>`).join("");
+  } catch(e) {
+    panel.innerHTML = "<h3>Neighbors</h3><div style='font-size:12px;color:#fc8181'>Error loading.</div>";
+  }
+}
+
+function focusNode(pid) {
+  if (!_nodeG) return;
+  _nodeG.each(function(d){
+    if (d.id===pid) { selectNode(this, d); }
+  });
+}
+
+// ---- utilities ----
+function esc(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+function resetZoom(){ svg.transition().duration(500).call(zoomBehavior.transform,d3.zoomIdentity); }
+
+// ---- label visibility modes ----
+function _labelVisible(d) {
+  if (_labelMode==="hidden") return false;
+  if (_labelMode==="all") return true;
+  // "relevant": always show labeled (seed/liked/disliked/skipped) nodes,
+  // plus unlabeled candidates above the relevance-score threshold.
+  return LABELED.has(d.label) || d.score>=LABEL_SCORE_THRESHOLD;
+}
+
+function setLabelMode(mode) {
+  _labelMode=mode;
+  if (_labels) _labels.style("display",d=>_labelVisible(d)?null:"none");
+  ["label-hide-btn","label-all-btn","label-relevant-btn"].forEach(id=>{
+    document.getElementById(id)?.classList.remove("active");
+  });
+  const activeId = mode==="hidden" ? "label-hide-btn"
+                  : mode==="all"   ? "label-all-btn"
+                  : "label-relevant-btn";
+  document.getElementById(activeId)?.classList.add("active");
+}
+
+function hideAllLabels()     { setLabelMode("hidden"); }
+function showAllLabels()     { setLabelMode("all"); }
+function showRelevantLabels(){ setLabelMode("relevant"); }
+
+// The Seeds & Liked list is a side panel the user opens and closes with
+// its own button. Removing a node refreshes it IN PLACE (refreshSeedsLiked)
+// so the list survives; only loadSeedsLiked() toggles it shut.
+function loadSeedsLiked(){
+  const panel=document.getElementById("seeds-liked-panel");
+  if(panel.style.display==="block"){ panel.style.display="none"; return; }
+  panel.style.display="block";
+  refreshSeedsLiked();
+}
+
+function refreshSeedsLiked(){
+  const panel=document.getElementById("seeds-liked-panel");
+  if(panel.style.display!=="block") return;   // closed: nothing to refresh
+  panel.innerHTML="<h3>Seeds &amp; Liked <span style='font-weight:400;color:#a0aec0'>(loading…)</span></h3>";
+  fetch("/api/papers/seeds-liked").then(r=>r.json())
+    .then(data=>renderSeedsLiked(panel, data.papers||[]))
+    .catch(()=>{ panel.innerHTML="<h3>Seeds &amp; Liked</h3><p style='font-size:12px;color:#fc8181'>Error loading list.</p>"; });
+}
+
+function renderSeedsLiked(panel, papers){
+  if(!papers.length){
+    panel.innerHTML="<h3>Seeds &amp; Liked</h3><p style='font-size:12px;color:#718096'>No seed or liked papers.</p>";
+    return;
+  }
+  const labelColor={seed:"#4299e1",liked:"#48bb78"};
+  let html="<h3>Seeds &amp; Liked <span style='font-weight:400;color:#a0aec0'>("+papers.length+")</span></h3>";
+  papers.forEach(p=>{
+    const col=labelColor[p.label]||"#a0aec0";
+    html+=`<div class="sl-item">
+      <div class="sl-info">
+        <div class="sl-title" onclick="selectNodeById('${esc(p.paper_id)}')" title="${esc(p.title)}">
+          <span class="badge" style="background:${col}22;color:${col}">${esc(p.label)}</span>${esc(p.title)}
+        </div>
+        <div class="sl-meta">${p.year||"?"} &middot; ${(p.citation_count||0).toLocaleString()} cit.</div>
+      </div>
+      <button class="sl-remove-btn" onclick="removePaper('${esc(p.paper_id)}')">Remove</button>
+    </div>`;
+  });
+  panel.innerHTML=html;
+}
+
+function removePaper(paperId){
+  if(!confirm("Remove this paper and its edges from the network?")) return;
+  return fetch("/api/paper/"+encodeURIComponent(paperId),{method:"DELETE"})
+    .then(r=>r.json())
+    .then(d=>{
+      if(d.ok){
+        const extra=(d.deleted&&d.deleted.length>1)?` (+${d.deleted.length-1} orphaned neighbor(s))`:"";
+        toast("Removed."+extra);
+        refreshSeedsLiked();
+        init();
+      }
+      else toast("Error: "+(d.error||"unknown"));
+    })
+    .catch(()=>toast("Network error."));
+}
+
+// Dislike is a removal: it takes the paper out along with anything left
+// orphaned by its departure, rather than just re-labelling it.
+function dislikeAndRemove(paperId){
+  return removePaper(paperId);
+}
+
+function selectNodeById(paperId){
+  const found=_allNodes.find(n=>n.id===paperId);
+  if(!found) return;
+  _selectedId=paperId;
+  // Clear first so this always highlights the picked node rather than
+  // toggling it off when it happens to be the current highlight (focusNode
+  // -> selectNode already fetches the detail panel + neighbor sidebar).
+  _highlightedId=null;
+  focusNode(paperId);
+}
+
+// ---- ranked by indegree panel ----
+let _rankedFilters = { unlabeled: true, seed: true, liked: true };
+
+function loadRankedPanel(){
+  const panel=document.getElementById("ranked-panel");
+  if(panel.style.display==="block"){ panel.style.display="none"; return; }
+  panel.style.display="block";
+  refreshRankedPanel();
+}
+
+function _rankedFilterControlsHtml(){
+  const cb=(key,label)=>`<label><input type="checkbox" onchange="setRankedFilter('${key}',this.checked)" ${_rankedFilters[key]?"checked":""}> ${label}</label>`;
+  return `<h3>Ranked by Indegree</h3>
+    <div class="rk-filters">${cb("unlabeled","Unlabeled")}${cb("seed","Seed")}${cb("liked","Liked")}</div>`;
+}
+
+function setRankedFilter(key, checked){
+  _rankedFilters[key]=checked;
+  refreshRankedPanel();
+}
+
+function refreshRankedPanel(){
+  const panel=document.getElementById("ranked-panel");
+  if(panel.style.display!=="block") return;   // closed: nothing to refresh
+  const selected=Object.keys(_rankedFilters).filter(k=>_rankedFilters[k]);
+  panel.innerHTML=_rankedFilterControlsHtml()+"<div style='font-size:12px;color:#718096'>Loading…</div>";
+  fetch(`/api/papers/ranked?labels=${encodeURIComponent(selected.join(","))}`)
+    .then(r=>r.json())
+    .then(data=>renderRankedPanel(panel, data.papers||[], data.total_matching||0))
+    .catch(()=>{ panel.innerHTML=_rankedFilterControlsHtml()+"<p style='font-size:12px;color:#fc8181'>Error loading list.</p>"; });
+}
+
+function renderRankedPanel(panel, papers, totalMatching){
+  const header=_rankedFilterControlsHtml();
+  if(!papers.length){
+    panel.innerHTML=header+"<p style='font-size:12px;color:#718096'>No papers match the selected filters.</p>";
+    return;
+  }
+  const labelColor={seed:"#4299e1",liked:"#48bb78"};
+  const note = totalMatching>papers.length
+    ? `<div class="rk-note">Showing top ${papers.length} of ${totalMatching} matching paper(s), sorted by indegree.</div>`
+    : `<div class="rk-note">${papers.length} paper(s), sorted by indegree.</div>`;
+  let html=header+note;
+  papers.forEach(p=>{
+    const col=labelColor[p.label]||"#a0aec0";
+    const labelText=p.label||"unlabeled";
+    html+=`<div class="sl-item">
+      <div class="sl-info">
+        <div class="sl-title" onclick="selectNodeById('${esc(p.paper_id)}')" title="${esc(p.title)}">
+          <span class="badge" style="background:${col}22;color:${col}">${esc(labelText)}</span>${esc(p.title)}
+        </div>
+        <div class="sl-meta">indegree ${p.indegree} &middot; ${p.year||"?"} &middot; ${(p.citation_count||0).toLocaleString()} cit.</div>
+      </div>
+    </div>`;
+  });
+  panel.innerHTML=html;
+}
+
+init().catch(e=>{
+  const el=document.getElementById("loading");
+  el.textContent="Error loading graph: "+e.message;
+  el.style.display="flex";
+});
+</script>
+</body>
+</html>

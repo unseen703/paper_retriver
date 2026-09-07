@@ -1,0 +1,17 @@
+# R1 uses prescore only. These activate at R3.
+weights:
+  ppr:      0.00   # R5
+  cocite:   0.00   # R3
+  bibcoup:  0.00   # R3
+  overlap:  2.00   # R1  <- dominant. Start here.
+  quality:  0.40
+  recency:  0.30
+  venue:    0.00   # R3
+  author:   0.00   # R3, cold-start only
+  dislike:  0.00   # R5, subtracted
+  hub:      0.60   # subtracted
+budget:
+  recency_lane_frac: 0.15
+  direction_floor_frac: 0.20
+  source_cap_frac: 0.40
+  score_floor: 0.0   # R3
