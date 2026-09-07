@@ -1,5 +1,5 @@
 # Dev entry points. Every BUILD.md task verifies through one of these.
-.PHONY: install dev verify test test-unit lint typecheck migrate eval load-arxiv
+.PHONY: install dev verify test test-unit lint typecheck migrate eval load-arxiv types frontend
 
 install:
 	uv sync
@@ -29,6 +29,18 @@ typecheck:
 
 migrate:
 	uv run alembic -c backend/migrations/alembic.ini upgrade head
+
+# Vite dev server. Port 5173 is the only origin the backend's CORS allowlist
+# permits, so it is pinned there rather than left to auto-increment.
+frontend:
+	cd frontend && npm run dev
+
+# Regenerate the frontend's API types from the LIVE schema. The backend must be
+# running -- `make dev` in another shell. CLAUDE.md forbids hand-writing these:
+# a hand-written type that drifts from the server compiles perfectly and fails
+# at runtime, which is the entire failure mode generation removes.
+types:
+	cd frontend && npm run types
 
 eval:
 	uv run python eval/run.py

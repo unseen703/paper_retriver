@@ -29,7 +29,6 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -47,6 +46,7 @@ from app.config import filters, settings
 from app.db import db_url as default_db_url
 from app.db import make_engine
 from app.logging_setup import bind_session, configure_logging
+from app.schemas.health import HealthResponse
 
 logger = logging.getLogger(__name__)
 
@@ -107,8 +107,8 @@ def create_app(db_url: str | None = None) -> FastAPI:
     application.include_router(graph_router)
     application.include_router(expansions_router)
 
-    @application.get("/api/health")
-    def health() -> dict[str, Any]:
+    @application.get("/api/health", response_model=HealthResponse)
+    def health() -> HealthResponse:
         """
         Is the database reachable, is S2 configured, how much is cached, and
         how big is the graph.
@@ -133,17 +133,17 @@ def create_app(db_url: str | None = None) -> FastAPI:
             logger.warning("health_db_unreachable: %s", exc)
             db_status = f"error: {type(exc).__name__}"
 
-        return {
-            "db": db_status,
+        return HealthResponse(
+            db=db_status,
             # Deliberately not a live probe -- see the module docstring.
-            "s2_reachable": "configured" if settings.s2_api_key else "no_api_key",
-            "cache_rows": cache_rows,
-            "node_count": node_count,
-            "session_id": settings.session_id,
+            s2_reachable="configured" if settings.s2_api_key else "no_api_key",
+            cache_rows=cache_rows,
+            node_count=node_count,
+            session_id=settings.session_id,
             # Which filters produced this graph is the first question when the
             # recommendations look wrong.
-            "config_version": filters.config_version,
-        }
+            config_version=filters.config_version,
+        )
 
     return application
 
