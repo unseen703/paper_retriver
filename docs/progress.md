@@ -21,6 +21,7 @@ observably true — not when its tasks are merely written.
 |---|---|---|---|
 | R0.1 — Repo scaffold | S | ✅ done | full gate — 67 passed |
 | R0.2 — Config loader | S | ✅ done | `uv run python -c "from app.config import settings, filters; print(settings.db_path, filters.config_version)"` → `data/app.db 620fa7f96045`; full gate — 98 passed |
+| —    — verify gate    | S | ✅ done | `uv run python scripts/verify.py` — OK: all 4 checks passed; 112 tests |
 | R0.3 — Domain models | S | next | — |
 
 ## Prerequisites
@@ -39,9 +40,16 @@ observably true — not when its tasks are merely written.
 1. **`docs/BUILD.md` and `docs/PLAN.md` were at the repo root.** `CLAUDE.md`
    references them under `docs/`, so they were moved there at R0.1. No content
    changed.
-2. **`make` is not installed on this machine** (Windows, no GNU Make). The
-   `Makefile` is written exactly as R0.1 specifies and is correct; until make
-   is installed, run the recipe bodies directly (`uv run pytest`, etc.).
+2. **`make` is not installed on this machine** (Windows, no GNU Make), and
+   `make lint && make test` would fail anyway -- `&&` is a parser error in
+   PowerShell 5.1. `scripts/verify.py` is the fix: one command, no
+   separators, runs lint + format + typecheck + test and reports *every*
+   failure rather than stopping at the first. `make verify` and CI both
+   call it, so the gate cannot drift between local and CI.
+
+   ```
+   uv run python scripts/verify.py
+   ```
 3. **`app` is the import root, not `backend.app`.** R0.2's verify command is
    `from app.config import settings, filters`, so `pyproject.toml` installs
    `backend/app` as the `app` package (hatchling) and pytest adds `backend`

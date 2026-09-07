@@ -1,5 +1,5 @@
 # Dev entry points. Every BUILD.md task verifies through one of these.
-.PHONY: install dev test test-unit lint typecheck migrate eval load-arxiv
+.PHONY: install dev verify test test-unit lint typecheck migrate eval load-arxiv
 
 install:
 	uv sync
@@ -8,6 +8,11 @@ install:
 
 dev:
 	uv run uvicorn app.main:app --reload --port 8000 --app-dir backend
+
+# The whole gate in one command. Works in PowerShell, where `a && b` is a
+# parser error -- so prefer this over chaining the targets below.
+verify:
+	uv run python scripts/verify.py
 
 test:
 	uv run pytest
