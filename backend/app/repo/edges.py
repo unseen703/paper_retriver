@@ -69,13 +69,16 @@ def upsert_edge(
     if via not in DISCOVERED_VIA:
         raise ValueError(f"discovered_via must be one of {sorted(DISCOVERED_VIA)}, got {via!r}")
 
-    prior = _existing(conn, citing_id, cited_id)
-    merged_via = via
-    merged_intents = set(intents)
-    if prior is not None:
-        prior_via, prior_intents = prior
-        merged_via = prior_via if prior_via == via else "BOTH"
-        merged_intents |= set(prior_intents)
+    # Only unioning intents genuinely needs the prior value. Reading
+    # unconditionally cost a second round trip on every edge -- 400 statements
+    # for one hub's 200 references -- so the common case (a citation edge with
+    # no intents) skips the read entirely and lets SQL do the merge.
+    merged_intents: set[str] | None = None
+    if intents:
+        prior = _existing(conn, citing_id, cited_id)
+        merged_intents = set(intents)
+        if prior is not None:
+            merged_intents |= set(prior[1])
 
     conn.execute(
         text(
@@ -83,16 +86,26 @@ def upsert_edge(
             " intents, first_seen_at)"
             " VALUES (:citing, :cited, :via, :infl, :intents, :now)"
             " ON CONFLICT (citing_id, cited_id) DO UPDATE SET"
-            "   discovered_via = :via,"
-            "   is_influential = MAX(edges.is_influential, excluded.is_influential),"
-            "   intents = :intents"
+            # BUILD.md Appendix B.2: the direction merge is pure SQL, so it
+            # needs no prior read. Same direction stays; anything else is BOTH.
+            "   discovered_via = CASE"
+            "     WHEN edges.discovered_via = excluded.discovered_via THEN edges.discovered_via"
+            "     ELSE 'BOTH' END,"
+            # COALESCE around MAX: SQLite's multi-argument MAX returns NULL if
+            # ANY argument is NULL, and is_influential is a nullable column.
+            # Without this, one NULL row silently clears the flag forever.
+            "   is_influential = MAX("
+            "     COALESCE(edges.is_influential, 0), COALESCE(excluded.is_influential, 0)),"
+            # NULL intents means "this write carried none", not "erase what is
+            # stored". COALESCE keeps the existing union.
+            "   intents = COALESCE(excluded.intents, edges.intents)"
             # first_seen_at deliberately absent: it records discovery, not the
             # most recent sighting.
         ),
         {
             "citing": citing_id,
             "cited": cited_id,
-            "via": merged_via,
+            "via": via,
             "infl": 1 if is_influential else 0,
             "intents": json.dumps(sorted(merged_intents)) if merged_intents else None,
             "now": first_seen_at or _utcnow(),

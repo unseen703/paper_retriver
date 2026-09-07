@@ -140,6 +140,7 @@ def to_paper(raw: S2Paper, *, crawl_state: CrawlState = CrawlState.METADATA) -> 
         influential_citation_count=raw.influentialCitationCount or 0,
         doi=_external(raw.externalIds, "DOI"),
         arxiv_id=_external(raw.externalIds, "ArXiv"),
+        authors=tuple((a.authorId, a.name) for a in raw.authors if a.authorId and a.name),
         s2_fields=tuple(raw.fieldsOfStudy or ()),
         publication_types=tuple(raw.publicationTypes or ()),
         crawl_state=crawl_state,

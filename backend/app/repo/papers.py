@@ -6,15 +6,24 @@ this module is deliberately unable to accept a session. BUILD.md puts it as
 "that's the type system enforcing the boundary for you", and a test in
 test_repo_papers.py inspects these signatures to keep it true.
 
-The subtle rule here is that **`crawl_state` never regresses**. The same paper
-arrives twice: once fetched in full, once as a bare neighbour inside somebody
-else's reference list. If the stub write won, the abstract would be erased and
-the paper would silently stop being scoreable, with nothing to indicate why.
+Two rules do the real work here.
+
+**`crawl_state` never regresses.** The same paper arrives twice: once fetched in
+full, once as a bare neighbour inside somebody else's reference list. If the
+stub write won, the abstract would be erased, the citation count reset to zero,
+and the paper would sink to the bottom of every ranking with nothing to say why.
+Every lossy column is guarded by `_IS_DOWNGRADE`.
+
+**Writes are one statement.** The guard is evaluated in SQL against the stored
+row's rank and `RETURNING` supplies the id, so upserting a candidate costs one
+round trip rather than three. An expansion upserts hundreds at a time.
 """
 
 from __future__ import annotations
 
 import json
+import re
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import Connection, text
@@ -33,6 +42,14 @@ _CRAWL_RANK = {
     CrawlState.EXPANDED: 3,
 }
 
+# The same ranking, expressed in SQL so the guard needs no prior SELECT.
+_STORED_RANK = (
+    "CASE papers.crawl_state"
+    " WHEN 'STUB' THEN 0 WHEN 'METADATA' THEN 1 WHEN 'REFS_DONE' THEN 2"
+    " WHEN 'CITES_DONE' THEN 2 WHEN 'EXPANDED' THEN 3 ELSE 0 END"
+)
+_IS_DOWNGRADE = f":crawl_rank < ({_STORED_RANK})"
+
 _COLUMNS = (
     "id, s2_paper_id, s2_corpus_id, canonical_paper_id, title, abstract, year,"
     " publication_date, venue, venue_tier, citation_count, reference_count,"
@@ -40,6 +57,76 @@ _COLUMNS = (
     " arxiv_categories, s2_fields, publication_types, paper_type, crawl_state,"
     " first_seen_at, metadata_fetched_at"
 )
+
+_UPSERT = text(
+    "INSERT INTO papers (s2_paper_id, s2_corpus_id, title, title_norm, abstract,"
+    " year, publication_date, venue, venue_tier, citation_count, reference_count,"
+    " influential_citation_count, doi, arxiv_id, primary_arxiv_category,"
+    " arxiv_categories, s2_fields, publication_types, paper_type, crawl_state,"
+    " first_seen_at, metadata_fetched_at)"
+    " VALUES (:s2_paper_id, :s2_corpus_id, :title, :title_norm, :abstract,"
+    " :year, :publication_date, :venue, :venue_tier, :citation_count, :reference_count,"
+    " :influential_citation_count, :doi, :arxiv_id, :primary_arxiv_category,"
+    " :arxiv_categories, :s2_fields, :publication_types, :paper_type, :crawl_state,"
+    " :first_seen_at, :metadata_fetched_at)"
+    " ON CONFLICT (s2_paper_id) DO UPDATE SET"
+    "   s2_corpus_id = COALESCE(excluded.s2_corpus_id, papers.s2_corpus_id),"
+    # COALESCE, not excluded: a later fetch with a narrower field set must not
+    # blank out data an earlier, richer one supplied.
+    "   title = CASE WHEN " + _IS_DOWNGRADE + " THEN papers.title ELSE excluded.title END,"
+    "   title_norm = CASE WHEN " + _IS_DOWNGRADE + " THEN papers.title_norm"
+    "     ELSE excluded.title_norm END,"
+    "   abstract = COALESCE(excluded.abstract, papers.abstract),"
+    "   year = COALESCE(excluded.year, papers.year),"
+    "   publication_date = COALESCE(excluded.publication_date, papers.publication_date),"
+    "   venue = COALESCE(excluded.venue, papers.venue),"
+    "   venue_tier = COALESCE(excluded.venue_tier, papers.venue_tier),"
+    # Counts default to 0 on a stub, so writing them unconditionally would let a
+    # bare neighbour record reset a hub's 191k citations to zero.
+    "   citation_count = CASE WHEN " + _IS_DOWNGRADE + " THEN papers.citation_count"
+    "     ELSE excluded.citation_count END,"
+    "   reference_count = CASE WHEN " + _IS_DOWNGRADE + " THEN papers.reference_count"
+    "     ELSE excluded.reference_count END,"
+    "   influential_citation_count = CASE WHEN "
+    + _IS_DOWNGRADE
+    + "     THEN papers.influential_citation_count"
+    "     ELSE excluded.influential_citation_count END,"
+    "   doi = COALESCE(excluded.doi, papers.doi),"
+    "   arxiv_id = COALESCE(excluded.arxiv_id, papers.arxiv_id),"
+    "   primary_arxiv_category ="
+    "     COALESCE(excluded.primary_arxiv_category, papers.primary_arxiv_category),"
+    "   arxiv_categories = COALESCE(excluded.arxiv_categories, papers.arxiv_categories),"
+    "   s2_fields = COALESCE(excluded.s2_fields, papers.s2_fields),"
+    "   publication_types = COALESCE(excluded.publication_types, papers.publication_types),"
+    "   paper_type = CASE WHEN " + _IS_DOWNGRADE + " THEN papers.paper_type"
+    "     ELSE excluded.paper_type END,"
+    "   crawl_state = CASE WHEN " + _IS_DOWNGRADE + " THEN papers.crawl_state"
+    "     ELSE excluded.crawl_state END,"
+    # first_seen_at records when the corpus first saw the paper, not the most
+    # recent refetch. Never overwritten.
+    "   metadata_fetched_at ="
+    "     COALESCE(excluded.metadata_fetched_at, papers.metadata_fetched_at)"
+    " RETURNING id"
+)
+
+_WORD = re.compile(r"[^\w]", re.UNICODE)
+
+
+def _utcnow() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def surname_of(full_name: str) -> str:
+    """
+    Last whitespace-separated token, lowercased and stripped of punctuation.
+
+    Crude on purpose. It only has to separate "LeCun" from "Hinton" well enough
+    to stop two unrelated same-titled papers merging; it is not a name parser.
+    """
+    parts = full_name.strip().split()
+    if not parts:
+        return ""
+    return _WORD.sub("", parts[-1].lower())
 
 
 def _json_list(raw: str | None) -> tuple[str, ...]:
@@ -85,71 +172,10 @@ def find_by_s2_id(conn: Connection, s2_paper_id: str) -> int | None:
     ).scalar()
 
 
-def _current_crawl_state(conn: Connection, s2_paper_id: str) -> CrawlState | None:
-    raw = conn.execute(
-        text("SELECT crawl_state FROM papers WHERE s2_paper_id = :s2_id"),
-        {"s2_id": s2_paper_id},
-    ).scalar()
-    return CrawlState(raw) if raw else None
-
-
 def upsert_paper(conn: Connection, paper: Paper) -> int:
-    """Insert or update by `s2_paper_id`. Returns the internal surrogate id."""
-    existing = _current_crawl_state(conn, paper.s2_paper_id)
-    crawl_state = paper.crawl_state
-    if existing is not None and _CRAWL_RANK[existing] > _CRAWL_RANK[crawl_state]:
-        crawl_state = existing
-
-    conn.execute(
-        text(
-            "INSERT INTO papers (s2_paper_id, s2_corpus_id, title, title_norm, abstract,"
-            " year, publication_date, venue, venue_tier, citation_count, reference_count,"
-            " influential_citation_count, doi, arxiv_id, primary_arxiv_category,"
-            " arxiv_categories, s2_fields, publication_types, paper_type, crawl_state,"
-            " first_seen_at, metadata_fetched_at)"
-            " VALUES (:s2_paper_id, :s2_corpus_id, :title, :title_norm, :abstract,"
-            " :year, :publication_date, :venue, :venue_tier, :citation_count, :reference_count,"
-            " :influential_citation_count, :doi, :arxiv_id, :primary_arxiv_category,"
-            " :arxiv_categories, :s2_fields, :publication_types, :paper_type, :crawl_state,"
-            " :first_seen_at, :metadata_fetched_at)"
-            " ON CONFLICT (s2_paper_id) DO UPDATE SET"
-            "   s2_corpus_id = COALESCE(excluded.s2_corpus_id, papers.s2_corpus_id),"
-            "   title = excluded.title,"
-            "   title_norm = excluded.title_norm,"
-            # COALESCE, not excluded: a later fetch with a narrower field set
-            # must not blank out data an earlier, richer one supplied.
-            "   abstract = COALESCE(excluded.abstract, papers.abstract),"
-            "   year = COALESCE(excluded.year, papers.year),"
-            "   publication_date = COALESCE(excluded.publication_date, papers.publication_date),"
-            "   venue = COALESCE(excluded.venue, papers.venue),"
-            "   venue_tier = COALESCE(excluded.venue_tier, papers.venue_tier),"
-            # Counts default to 0 on a stub, so writing them unconditionally
-            # would let a bare neighbour record reset a hub's 191k citations to
-            # zero -- and the paper would then rank near the bottom forever.
-            # Only a write at least as complete as what is stored may update.
-            "   citation_count = CASE WHEN :is_downgrade THEN papers.citation_count"
-            "     ELSE excluded.citation_count END,"
-            "   reference_count = CASE WHEN :is_downgrade THEN papers.reference_count"
-            "     ELSE excluded.reference_count END,"
-            "   influential_citation_count = CASE WHEN :is_downgrade"
-            "     THEN papers.influential_citation_count"
-            "     ELSE excluded.influential_citation_count END,"
-            "   doi = COALESCE(excluded.doi, papers.doi),"
-            "   arxiv_id = COALESCE(excluded.arxiv_id, papers.arxiv_id),"
-            "   primary_arxiv_category ="
-            "     COALESCE(excluded.primary_arxiv_category, papers.primary_arxiv_category),"
-            "   arxiv_categories = COALESCE(excluded.arxiv_categories, papers.arxiv_categories),"
-            "   s2_fields = COALESCE(excluded.s2_fields, papers.s2_fields),"
-            "   publication_types ="
-            "     COALESCE(excluded.publication_types, papers.publication_types),"
-            "   paper_type = CASE WHEN :is_downgrade THEN papers.paper_type"
-            "     ELSE excluded.paper_type END,"
-            "   crawl_state = excluded.crawl_state,"
-            # first_seen_at records when the corpus first saw the paper, not
-            # the most recent refetch. Never overwritten.
-            "   metadata_fetched_at ="
-            "     COALESCE(excluded.metadata_fetched_at, papers.metadata_fetched_at)"
-        ),
+    """Insert or update by `s2_paper_id` in one statement. Returns the id."""
+    row = conn.execute(
+        _UPSERT,
         {
             "s2_paper_id": paper.s2_paper_id,
             "s2_corpus_id": paper.s2_corpus_id,
@@ -174,24 +200,23 @@ def upsert_paper(conn: Connection, paper: Paper) -> int:
             if paper.publication_types
             else None,
             "paper_type": paper.paper_type.value,
-            "crawl_state": crawl_state.value,
-            # True when a lower-fidelity record is overwriting a richer one.
-            "is_downgrade": crawl_state is not paper.crawl_state,
+            "crawl_state": paper.crawl_state.value,
+            "crawl_rank": _CRAWL_RANK[paper.crawl_state],
             "first_seen_at": paper.first_seen_at,
             "metadata_fetched_at": paper.metadata_fetched_at,
         },
-    )
-    paper_id = find_by_s2_id(conn, paper.s2_paper_id)
-    assert paper_id is not None  # noqa: S101 - just inserted
-    return paper_id
+    ).fetchone()
+    if row is None:  # pragma: no cover - RETURNING always yields a row
+        raise RuntimeError(f"upsert produced no id for {paper.s2_paper_id}")
+    return int(row[0])
 
 
 def upsert_stub(conn: Connection, s2_id: str, title: str, year: int | None) -> int:
     """
     Write the little we know about a nested neighbour.
 
-    Never downgrades an existing row: `upsert_paper` keeps the higher
-    crawl_state, and every optional column here is COALESCEd.
+    Never downgrades an existing row: the crawl-state guard keeps the higher
+    state and every optional column is COALESCEd.
     """
     return upsert_paper(
         conn,
@@ -205,10 +230,33 @@ def upsert_stub(conn: Connection, s2_id: str, title: str, year: int | None) -> i
     )
 
 
-def _utcnow() -> str:
-    from datetime import UTC, datetime
+def set_authors(conn: Connection, paper_id: int, authors: list[tuple[str, str]]) -> None:
+    """
+    Attach `(s2_author_id, name)` pairs in order. Position 0 is the first author.
 
-    return datetime.now(UTC).isoformat()
+    Idempotent, and an author shared by two papers is stored once. Dedup's
+    canonical title key needs the first author to tell two same-titled papers
+    apart, which is the only reason this exists at R1.1.
+    """
+    for position, (s2_author_id, name) in enumerate(authors):
+        conn.execute(
+            text(
+                "INSERT INTO authors (s2_author_id, name) VALUES (:s2_id, :name)"
+                " ON CONFLICT (s2_author_id) DO UPDATE SET name = excluded.name"
+            ),
+            {"s2_id": s2_author_id, "name": name},
+        )
+        author_id = conn.execute(
+            text("SELECT id FROM authors WHERE s2_author_id = :s2_id"), {"s2_id": s2_author_id}
+        ).scalar()
+        conn.execute(
+            text(
+                "INSERT INTO paper_authors (paper_id, author_id, position)"
+                " VALUES (:paper_id, :author_id, :position)"
+                " ON CONFLICT (paper_id, author_id) DO UPDATE SET position = excluded.position"
+            ),
+            {"paper_id": paper_id, "author_id": author_id, "position": position},
+        )
 
 
 def get_papers_by_ids(conn: Connection, ids: list[int]) -> list[Paper]:
@@ -244,16 +292,44 @@ def find_by_canonical_key(conn: Connection, key: CanonicalKey) -> int | None:
             text("SELECT id FROM papers WHERE arxiv_id = :arxiv_id"), {"arxiv_id": key[1]}
         ).scalar()
     if kind == "title":
-        _, title_norm, _surname, year = key
-        return conn.execute(
-            text(
-                "SELECT id FROM papers WHERE title_norm = :title_norm"
-                " AND (:year IS NULL OR year IS NULL OR year = :year)"
-                " ORDER BY id LIMIT 1"
-            ),
-            {"title_norm": title_norm, "year": year},
-        ).scalar()
+        return _find_by_title(conn, key)
     raise ValueError(f"unknown canonical key kind: {kind!r}")
+
+
+def _find_by_title(conn: Connection, key: CanonicalKey) -> int | None:
+    """
+    Title keys also carry the first author's surname, and it is load-bearing:
+    two unrelated papers can share a normalized title, and the first author is
+    what separates them. R1.3 says to test that false-positive direction
+    hardest.
+
+    A paper with no authors stored still matches -- absence of evidence is not
+    evidence of difference, and most rows have no authors persisted, so
+    rejecting them would make dedup match nothing.
+
+    The surname comparison happens in Python because SQLite cannot extract the
+    last word of a name. Candidates are few: `title_norm` is indexed.
+    """
+    _, title_norm, surname, year = key
+    rows = conn.execute(
+        text(
+            "SELECT p.id, a.name FROM papers p"
+            " LEFT JOIN paper_authors pa ON pa.paper_id = p.id AND pa.position = 0"
+            " LEFT JOIN authors a ON a.id = pa.author_id"
+            " WHERE p.title_norm = :title_norm"
+            "   AND (:year IS NULL OR p.year IS NULL OR p.year = :year)"
+            " ORDER BY p.id"
+        ),
+        {"title_norm": title_norm, "year": year},
+    ).fetchall()
+
+    wanted = surname_of(surname) if surname else None
+    for paper_id, first_author in rows:
+        if wanted is None or first_author is None:
+            return int(paper_id)
+        if surname_of(first_author) == wanted:
+            return int(paper_id)
+    return None
 
 
 __all__ = [
@@ -261,6 +337,8 @@ __all__ = [
     "find_by_canonical_key",
     "find_by_s2_id",
     "get_papers_by_ids",
+    "set_authors",
+    "surname_of",
     "upsert_paper",
     "upsert_stub",
 ]

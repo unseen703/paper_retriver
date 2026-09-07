@@ -14,6 +14,7 @@ degraded score into a crash mid-expansion.
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -55,17 +56,33 @@ DISCOVERED_VIA = frozenset({"BACKWARD", "FORWARD", "BOTH"})
 
 _PUNCT = re.compile(r"[^\w\s]")
 _WS = re.compile(r"\s+")
+# Only a LEADING article is dropped. Removing every "a"/"the" would merge
+# genuinely different titles.
+_ARTICLES = frozenset({"a", "an", "the"})
 
 
 def normalize_title(title: str) -> str:
     """
-    Lowercase, drop punctuation, collapse whitespace.
+    NFKD, lowercase, drop punctuation, collapse whitespace, drop a leading
+    article. See BUILD.md R1.3.
 
     Punctuation is *deleted* rather than replaced with a space, so
     "Pre-training" and "Pretraining" normalize identically -- that pair is the
-    common arXiv/conference duplicate the dedup stage (R1.3) has to catch.
+    common arXiv/conference duplicate the dedup stage has to catch.
+
+    NFKD matters because a precomposed umlaut and a combining diaeresis are the
+    same string to a reader and different bytes to Python; decomposing then
+    stripping the combining mark folds them together.
+
+    Deliberately NOT aggressive beyond this. "Attention Is All You Need" and
+    "Attention Is Not All You Need" are different papers, and any normalization
+    that merges them is worse than one that misses a duplicate.
     """
-    return _WS.sub(" ", _PUNCT.sub("", title.lower())).strip()
+    decomposed = unicodedata.normalize("NFKD", title)
+    words = _WS.sub(" ", _PUNCT.sub("", decomposed.lower())).strip().split()
+    if len(words) > 1 and words[0] in _ARTICLES:
+        words = words[1:]
+    return " ".join(words)
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +129,11 @@ class Paper:
     arxiv_categories: tuple[str, ...] = ()
     s2_fields: tuple[str, ...] = ()
     publication_types: tuple[str, ...] = ()
+
+    # (s2_author_id, name) in byline order. Carried on the domain object rather
+    # than looked up, because dedup's canonical key needs the first author and
+    # S2 returns the byline with every paper fetch anyway.
+    authors: tuple[tuple[str, str], ...] = ()
 
     paper_type: PaperType = PaperType.UNKNOWN
     crawl_state: CrawlState = CrawlState.STUB
@@ -173,6 +195,42 @@ class FilterDecision:
     # paper is a 2013 dataset paper in every session (BUILD.md session_id
     # contract). False -> a fact about *this* graph only.
     is_global: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class GraphNode:
+    """
+    One paper's presence in one session's graph.
+
+    `state` is the materialized projection of that paper's event log; the log in
+    `interaction_events` is the source of truth, and scripts/rebuild_state.py
+    (R2.3) reconstructs this from it.
+    """
+
+    session_id: int
+    paper_id: int
+    state: str  # SEED|CANDIDATE|LIKED|DISLIKED
+    depth: int
+    score: float | None = None
+    features: dict[str, Any] = field(default_factory=dict)
+    score_breakdown: dict[str, Any] = field(default_factory=dict)
+    added_by: int | None = None
+    pos_x: float | None = None
+    pos_y: float | None = None
+    community_id: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class InteractionEvent:
+    """Append-only. Never updated, never deleted -- it is the audit trail."""
+
+    id: int
+    session_id: int
+    paper_id: int
+    event_type: str  # SEED_ADDED|LIKED|DISLIKED|UNLABELED|REMOVED|RESTORED|GC_SWEPT
+    actor: str  # USER|SYSTEM
+    created_at: str
+    payload: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
