@@ -5,7 +5,7 @@ observably true — not when its tasks are merely written.
 
 | Release | Gate | Done |
 |---|---|:--:|
-| R0 | Fetch twice → zero network calls on the second; `cs.CL` for BERT, `cs.CV` for ResNet | ☐ |
+| R0 | Fetch twice → zero network calls on the second; `cs.CL` for BERT, `cs.CV` for ResNet | ✅ |
 | R1 | Browser: "BERT" → Expand ×2 → ~60 post-2015 core-ML nodes in <90s | ☐ |
 | — | **Use it for a week. Keep an annoyance list.** | ☐ |
 | R2 | 20 min of curation: layout stable, no removed paper returns, every rejection reversible | ☐ |
@@ -19,10 +19,22 @@ observably true — not when its tasks are merely written.
 
 | Task | Size | Status | Verified by |
 |---|---|---|---|
-| R0.1 — Repo scaffold | S | ✅ done | full gate — 67 passed |
-| R0.2 — Config loader | S | ✅ done | `uv run python -c "from app.config import settings, filters; print(settings.db_path, filters.config_version)"` → `data/app.db 620fa7f96045`; full gate — 98 passed |
-| —    — verify gate    | S | ✅ done | `uv run python scripts/verify.py` — OK: all 4 checks passed; 112 tests |
-| R0.3 — Domain models | S | next | — |
+| R0.1 — Repo scaffold | S | ✅ | 67 tests |
+| R0.2 — Config loader | S | ✅ | `settings.db_path` + `filters.config_version` print |
+| — verify gate | S | ✅ | `uv run python scripts/verify.py` |
+| R0.3 — Domain models | S | ✅ | 34 tests, construction + immutability |
+| R0.4 — Alembic baseline | M | ✅ | 32 tests; `downgrade base` → `upgrade head` clean |
+| R0.5 — Token-bucket limiter | S | ✅ | 5 acquisitions @10/s in 0.4–0.6s |
+| R0.6 — Response cache | S | ✅ | put/get round-trip; key stable across dict order |
+| R0.7 — S2 client | L | ✅ | 34 tests offline; `cli fetch` prints normalized metadata |
+| **R0.8 ◆ CHECKPOINT** | S | ✅ | run 1 `api_calls=2`; run 2 `api_calls=0, cache_hits=2` |
+| R0.9 — CachedOnly + fixtures | M | ✅ | 16 tests, network disabled; 612KB fixture committed |
+| R0.10 — arXiv bulk loader | L | ✅ | 3,156,710 rows, 0 unparseable; watermark 2026-09-04 |
+| **R0.11 ◆ CHECKPOINT** | S | ✅ | BERT→cs.CL, ResNet→cs.CV, BatchNorm→cs.LG |
+| R0.12 — Structured logging | S | ✅ | `grep s2_request data/app.log` shows JSON lines |
+| R1.1 — repo/papers.py, repo/edges.py | M | next | — |
+
+**R0 complete.** Suite at 327; full gate green.
 
 ## Prerequisites
 
@@ -31,8 +43,8 @@ observably true — not when its tasks are merely written.
 | P1 | Python 3.11+, Node 20+, git | ✅ Python 3.14.7, Node 24.20.0, git 2.55.0 |
 | P2 | `uv` installed | ✅ uv 0.12.5 |
 | P3 | Semantic Scholar API key | ✅ present in `.env` as `S2_API_KEY` |
-| P4 | Read current S2 API docs → `docs/s2-api-notes.md` | ☐ **open — do before R0.7** |
-| P5 | arXiv metadata source chosen | ✅ Kaggle Cornell arXiv dataset |
+| P4 | Read current S2 API docs → `docs/s2-api-notes.md` | ✅ written (from `legacy/` + BUILD.md; not re-verified live — see the ⚠️ list in that file) |
+| P5 | arXiv metadata source chosen | ✅ **both** — Kaggle snapshot for bulk, OAI-PMH for the delta |
 | P6 | Empty GitHub repo, CI enabled | ◐ `git init` done locally; no remote, not pushed |
 
 ## Deviations from BUILD.md as written
