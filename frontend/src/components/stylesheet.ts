@@ -64,24 +64,39 @@ export const stylesheet = [
     },
   },
 
-  // Labels are opt-in per node -- see `withLabelFlags`.
+  // Text styling lives on the BASE node selector, not on `node[label]`.
+  //
+  // That distinction caused a real bug. `node[label]` is a DATA selector -- it
+  // matches nodes whose data carries a `label` field -- while the hover
+  // handler reveals a title by setting the STYLE property of the same name.
+  // A node outside the labelled few therefore got a label with none of the
+  // styling below, and fell through to Cytoscape's defaults: black text at
+  // 16px with no outline, which on a #0f1117 canvas is invisible.
+  //
+  // On the base selector these properties are inert until something actually
+  // supplies a label, so nothing is lost by hoisting them.
   {
-    selector: "node[label]",
+    selector: "node",
     style: {
-      label: "data(label)",
       "font-size": 9,
-      // `.node text { fill: #cbd5e0 }`, measured.
+      // `.node text { fill: #cbd5e0 }`, measured off the running prototype.
       color: "#cbd5e0",
       "text-valign": "bottom",
       "text-margin-y": 3,
       "text-wrap": "ellipsis",
       "text-max-width": 110,
-      "text-outline-width": 2,
-      // Outlined in the canvas colour so a label crossing an edge stays legible.
+      // 1, not 2. At a 9px font a 2px outline is ~22% of the em and the stroke
+      // is centred on the glyph path, so half of it eats inward and fills in
+      // the thin strokes and counters. It exists to keep a label legible where
+      // it crosses an edge, which one pixel does.
+      "text-outline-width": 1,
       "text-outline-color": "#0f1117",
       "text-outline-opacity": 0.9,
     },
   },
+  // Which nodes carry a label by default -- see `withLabelFlags`. Hover adds
+  // one to any node, and it now inherits the styling above.
+  { selector: "node[label]", style: { label: "data(label)" } },
 
   {
     selector: 'node[state="SEED"]',
