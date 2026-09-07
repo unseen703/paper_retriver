@@ -134,7 +134,7 @@ export function GraphCanvas({
 
     // --- hover: light the neighbourhood, fade the rest --------------------
     const clearHighlight = () => {
-      instance.elements().removeClass("hl fade");
+      instance.elements().removeClass("hl fade hover");
     };
 
     instance.on("mouseover", "node", (event) => {
@@ -142,6 +142,10 @@ export function GraphCanvas({
       const near = node.closedNeighborhood();
       instance.elements().addClass("fade");
       near.removeClass("fade").addClass("hl");
+      // The pointed-at node gets a white rim on top of the neighbourhood's
+      // yellow, so it stays distinguishable from what it lit up -- the
+      // prototype's `.node circle:hover` versus `.node.neighbor circle`.
+      node.addClass("hover");
       // A label for the hovered node even when it is not one of the labelled
       // few -- this is how you read an unlabelled ball without clicking it.
       node.style("label", node.data("title"));

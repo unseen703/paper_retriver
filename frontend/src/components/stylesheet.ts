@@ -36,6 +36,10 @@ const COLOR = {
   CANDIDATE: "#a0aec0",
 } as const;
 
+// The prototype's selection/neighbour colour. Yellow, not orange -- it is the
+// one hue not already carrying meaning in the node palette.
+const HIGHLIGHT = "#f6e05e";
+
 export const stylesheet = [
   {
     selector: "node",
@@ -44,7 +48,13 @@ export const stylesheet = [
       width: "data(diameter)",
       height: "data(diameter)",
       "background-color": COLOR.CANDIDATE,
-      "border-width": 0,
+      // Every ball carries a rim in the panel colour, exactly as the
+      // prototype did (`.node circle { stroke: #1a1f2e; stroke-width: 1.5 }`).
+      // It is what stops adjacent circles merging into one blob at the sizes
+      // this graph draws them, and it is why the prototype's dense clusters
+      // stayed countable.
+      "border-width": 1.5,
+      "border-color": "#1a1f2e",
       // Transitions are what make the graph feel alive under the cursor rather
       // than snapping between states.
       "transition-property": "background-color, border-width, opacity",
@@ -58,13 +68,14 @@ export const stylesheet = [
     style: {
       label: "data(label)",
       "font-size": 9,
-      color: "#cbd5e0",
+      color: "#a0aec0",
       "text-valign": "bottom",
       "text-margin-y": 3,
       "text-wrap": "ellipsis",
       "text-max-width": 110,
       "text-outline-width": 2,
-      "text-outline-color": "#14161a",
+      // Outlined in the canvas colour so a label crossing an edge stays legible.
+      "text-outline-color": "#0f1117",
       "text-outline-opacity": 0.9,
     },
   },
@@ -73,9 +84,9 @@ export const stylesheet = [
     selector: 'node[state="SEED"]',
     style: {
       "background-color": COLOR.SEED,
-      // Carries the same information the hexagon did, in the border.
+      // Carries the same information B.6's hexagon did, in the border.
       "border-width": 3,
-      "border-color": "#1a365d",
+      "border-color": "#2b6cb0",
     },
   },
   { selector: 'node[state="LIKED"]', style: { "background-color": COLOR.LIKED } },
@@ -105,7 +116,9 @@ export const stylesheet = [
       "target-arrow-shape": "triangle",
       "target-arrow-color": "#4a5568",
       "arrow-scale": 0.55,
-      opacity: "mapData(influential, 0, 1, 0.35, 0.75)",
+      // The prototype drew links at stroke-opacity 0.5; influential edges get
+      // a little more so they read as the stronger claim.
+      opacity: "mapData(influential, 0, 1, 0.5, 0.85)",
       "transition-property": "line-color, opacity",
       "transition-duration": "120ms",
     },
@@ -115,21 +128,33 @@ export const stylesheet = [
   // The hovered node and its neighbourhood stay lit; everything else drops
   // back. This is what makes a dense graph readable: you trace one paper's
   // connections by pointing at it rather than by squinting.
+  // The prototype highlighted through the STROKE and left the fill alone --
+  // `.node.neighbor circle { stroke: #f6e05e; stroke-width: 2.5 }`. Keeping
+  // the fill means a highlighted node still reports its state and score while
+  // it is lit, which a colour change would overwrite.
   {
     selector: "node.hl",
-    style: { "border-width": 3, "border-color": "#f6ad55", "z-index": 20 },
+    style: { "border-width": 2.5, "border-color": HIGHLIGHT, "z-index": 20 },
   },
   {
     selector: "edge.hl",
-    style: { "line-color": "#f6ad55", "target-arrow-color": "#f6ad55", opacity: 1, width: 2 },
+    style: { "line-color": HIGHLIGHT, "target-arrow-color": HIGHLIGHT, opacity: 1, width: 1.8 },
   },
-  { selector: ".fade", style: { opacity: 0.08 } },
+  // 0.06, the prototype's `.link.dimmed`. Low enough that the faded part of
+  // the graph reads as context rather than as content competing for attention.
+  { selector: ".fade", style: { opacity: 0.06 } },
   {
     selector: "node:selected",
-    style: { "border-width": 4, "border-color": "#f6e05e", "z-index": 30 },
+    style: { "border-width": 3, "border-color": HIGHLIGHT, "z-index": 30 },
+  },
+  // White on hover, as the prototype did (`.node circle:hover`), so the node
+  // under the pointer is distinguishable from the neighbours it lit up.
+  {
+    selector: "node.hover",
+    style: { "border-color": "#ffffff", "border-width": 2.5, "z-index": 40 },
   },
   // Cytoscape's own grab cue, so a draggable node looks draggable.
-  { selector: "node:active", style: { "overlay-opacity": 0.15, "overlay-color": "#f6ad55" } },
+  { selector: "node:active", style: { "overlay-opacity": 0.12, "overlay-color": HIGHLIGHT } },
 ] as unknown as cytoscape.StylesheetJson;
 
 /** The prototype's radius curve, verbatim. Doubled because Cytoscape sizes by diameter. */
