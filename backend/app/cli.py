@@ -20,6 +20,7 @@ from app.clients.cache import ResponseCache
 from app.clients.s2 import S2Client
 from app.config import settings
 from app.db import make_engine
+from app.services.categories import CategoryResolver
 
 app = typer.Typer(add_completion=False, help="Citation-graph paper recommender.")
 
@@ -47,12 +48,15 @@ def _make_client() -> tuple[S2Client, ResponseCache]:
 
 async def _fetch(title: str, limit: int) -> int:
     client, _ = _make_client()
+    # R0.11: S2's fieldsOfStudy is too coarse to separate cs.CL from cs.CV, so
+    # the fine-grained category comes from the arxiv_meta join.
+    resolver = CategoryResolver(make_engine())
     try:
         stubs = await client.search_title(title, limit=limit)
         if not stubs:
             typer.echo(f"no match for {title!r}")
         else:
-            papers = await client.get_papers([s.s2_paper_id for s in stubs[:1]])
+            papers = resolver.enrich(await client.get_papers([s.s2_paper_id for s in stubs[:1]]))
             for paper in papers:
                 typer.echo(
                     json.dumps(
