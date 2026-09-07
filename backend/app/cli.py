@@ -24,6 +24,17 @@ from app.db import make_engine
 app = typer.Typer(add_completion=False, help="Citation-graph paper recommender.")
 
 
+@app.callback()
+def main() -> None:
+    """
+    Root callback.
+
+    Without it Typer collapses a lone command into the app default, so
+    `python -m app.cli fetch "..."` would parse "fetch" as the title. More
+    commands arrive at R0.10 and R0.11 regardless.
+    """
+
+
 def _make_client() -> tuple[S2Client, ResponseCache]:
     engine = make_engine()
     cache = ResponseCache(engine)
