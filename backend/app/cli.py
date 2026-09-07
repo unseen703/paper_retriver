@@ -23,15 +23,18 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import typer
+from sqlalchemy import text
 
 from app.clients.cache import ResponseCache
 from app.clients.s2 import S2Client
-from app.config import filters, settings
+from app.config import filters, ranking, settings
 from app.db import make_engine
 from app.logging_setup import bind_session, configure_logging
 from app.repo import papers as papers_repo
 from app.services.categories import CategoryResolver
+from app.services.expansion import ExpandParams, expand
 from app.services.filters.cascade import CascadeStats, run_cascade
+from app.services.seed import AlreadyPresent, SeedRejected, add_seed
 
 app = typer.Typer(add_completion=False, help="Citation-graph paper recommender.")
 
@@ -213,6 +216,120 @@ async def _filter_report(title: str, limit: int) -> int:
 def filter_report(title: str = "BERT", limit: int = 50) -> None:
     """Fetch a paper's references, run the cascade, print the verdict table."""
     raise typer.Exit(asyncio.run(_filter_report(title, limit)))
+
+
+# ---------------------------------------------------------------------------
+# seed / show -- R1.13 checkpoint
+# ---------------------------------------------------------------------------
+
+
+async def _seed(title: str, expand_after: bool, max_new: int, force: bool) -> int:
+    client, _ = _make_client()
+    engine = make_engine()
+    as_of = datetime.now(UTC).year
+    try:
+        stubs = await client.search_title(title, limit=5)
+        if not stubs:
+            typer.echo(f"no match for {title!r}")
+            return 1
+        top = stubs[0]
+        try:
+            node = await add_seed(
+                engine, client, settings.session_id, top.s2_paper_id, filters, as_of, force
+            )
+        except AlreadyPresent:
+            typer.echo(f"already seeded: {top.title}")
+            return 0
+        except SeedRejected as exc:
+            typer.echo(f"rejected: {top.title}")
+            typer.echo(f"  {exc.stage} / {exc.reason_code} -- use --force to add anyway")
+            return 1
+        typer.echo(f"seeded: {top.title} (paper_id={node.paper_id})")
+
+        if expand_after:
+            result = await expand(
+                engine,
+                client,
+                settings.session_id,
+                ExpandParams(max_new=max_new),
+                filters,
+                ranking,
+                as_of,
+            )
+            typer.echo(
+                f"expanded: pool={result.n_pool} added={result.n_added}"
+                f" boundary={result.ingest.boundary}"
+                f" backward={result.backward_fetched} forward={result.forward_fetched}"
+                f" hubs_skipped={result.hub_skipped}"
+            )
+            if result.error:
+                typer.echo(f"  note: {result.error}")
+    finally:
+        typer.echo(f"api_calls={client.api_calls}, cache_hits={client.cache_hits}")
+        await client.aclose()
+        engine.dispose()
+    return 0
+
+
+@app.command()
+def seed(
+    title: str,
+    expand_after: bool = typer.Option(False, "--expand"),
+    max_new: int = 20,
+    force: bool = False,
+) -> None:
+    """Add a paper as a seed, optionally expanding from it."""
+    raise typer.Exit(asyncio.run(_seed(title, expand_after, max_new, force)))
+
+
+@app.command()
+def show(session: int = 1) -> None:
+    """Print the current graph and the corpus behind it."""
+    engine = make_engine()
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT g.state, p.year, p.primary_arxiv_category, ROUND(g.score, 2), p.title"
+                " FROM graph_nodes g JOIN papers p ON p.id = g.paper_id"
+                " WHERE g.session_id = :sid"
+                " ORDER BY CASE g.state WHEN 'SEED' THEN 0 ELSE 1 END, g.score DESC, p.id"
+            ),
+            {"sid": session},
+        ).fetchall()
+        totals = conn.execute(
+            text(
+                "SELECT (SELECT COUNT(*) FROM papers),"
+                "       (SELECT COUNT(*) FROM edges),"
+                "       (SELECT COUNT(*) FROM graph_nodes WHERE session_id = :sid),"
+                "       (SELECT COUNT(*) FROM filter_decisions),"
+                "       (SELECT COUNT(*) FROM papers p WHERE NOT EXISTS"
+                "          (SELECT 1 FROM graph_nodes g WHERE g.paper_id = p.id"
+                "             AND g.session_id = :sid))"
+            ),
+            {"sid": session},
+        ).fetchone()
+
+    widths = (11, 6, 13, 8, 60)
+    typer.echo(
+        "".join(
+            _cell(h, w)
+            for h, w in zip(("state", "year", "primary_cat", "score", "title"), widths, strict=True)
+        )
+    )
+    typer.echo("-" * sum(widths))
+    for state, year, cat, score, title in rows:
+        typer.echo(
+            "".join(
+                _cell(v, w) for v, w in zip((state, year, cat, score, title), widths, strict=True)
+            )
+        )
+    papers, edges, nodes, decisions, boundary = totals
+    typer.echo("")
+    typer.echo(f"graph_nodes    {nodes}")
+    typer.echo(f"papers         {papers}   ({boundary} with no node -- boundary papers + rejects)")
+    typer.echo(f"edges          {edges}")
+    typer.echo(f"decisions      {decisions}")
+    engine.dispose()
 
 
 if __name__ == "__main__":
