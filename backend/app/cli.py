@@ -20,6 +20,7 @@ from app.clients.cache import ResponseCache
 from app.clients.s2 import S2Client
 from app.config import settings
 from app.db import make_engine
+from app.logging_setup import bind_session, configure_logging
 from app.services.categories import CategoryResolver
 
 app = typer.Typer(add_completion=False, help="Citation-graph paper recommender.")
@@ -33,7 +34,11 @@ def main() -> None:
     Without it Typer collapses a lone command into the app default, so
     `python -m app.cli fetch "..."` would parse "fetch" as the title. More
     commands arrive at R0.10 and R0.11 regardless.
+
+    It is also the single place logging is configured, before any command runs.
     """
+    configure_logging(level=settings.log_level)
+    bind_session(session_id=settings.session_id)
 
 
 def _make_client() -> tuple[S2Client, ResponseCache]:

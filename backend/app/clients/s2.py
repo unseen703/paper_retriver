@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -30,6 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.clients.cache import ResponseCache
 from app.clients.rate_limit import TokenBucket
+from app.logging_setup import log_s2_request
 from app.models import Author, CrawlState, Paper, PaperStub
 
 logger = logging.getLogger(__name__)
@@ -210,21 +212,41 @@ class S2Client:
         if json_body is not None:
             key_params["__body"] = json_body
 
+        started = time.monotonic()
         if await self._cache.has(path, key_params):
             self.cache_hits += 1
-            return await self._cache.get(path, key_params)
+            payload = await self._cache.get(path, key_params)
+            log_s2_request(
+                endpoint=path,
+                cache_hit=True,
+                status=None,
+                duration_ms=(time.monotonic() - started) * 1000,
+            )
+            return payload
 
         last_error: Exception | None = None
         for attempt in range(1, self._max_attempts + 1):
             await self._bucket.acquire()
             self.api_calls += 1
+            call_started = time.monotonic()
             try:
                 response = await self._http.request(method, path, params=params, json=json_body)
             except httpx.HTTPError as exc:  # network-level
+                log_s2_request(
+                    endpoint=path,
+                    cache_hit=False,
+                    status=None,
+                    duration_ms=(time.monotonic() - call_started) * 1000,
+                )
                 last_error = exc
                 await self._backoff(attempt)
                 continue
-
+            log_s2_request(
+                endpoint=path,
+                cache_hit=False,
+                status=response.status_code,
+                duration_ms=(time.monotonic() - call_started) * 1000,
+            )
             if response.status_code == 404:
                 await self._cache.put(path, key_params, 404, None)
                 return None
