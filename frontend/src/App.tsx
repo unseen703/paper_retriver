@@ -163,6 +163,21 @@ function Legend() {
         </span>
       ))}
       <span style={{ color: "var(--muted)" }}>· size = citations</span>
+      {/* The year ramp needs saying, or a viewer reads the lighter candidates
+          as "more relevant" -- the meaning the amber ramp used to carry. */}
+      <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+        <span style={{ color: "var(--muted)" }}>· shade =</span>
+        <span
+          style={{
+            width: 34,
+            height: 8,
+            borderRadius: 4,
+            background: "linear-gradient(90deg, #6b7a90, #dfe6ef)",
+            flexShrink: 0,
+          }}
+        />
+        <span style={{ color: "var(--muted)" }}>older → newer</span>
+      </span>
     </span>
   );
 }

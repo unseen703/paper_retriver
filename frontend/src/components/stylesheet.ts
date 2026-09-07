@@ -118,14 +118,30 @@ export const stylesheet = [
       "border-color": "#742a2a",
     },
   },
-  // CANDIDATE keeps the base grey -- no rule needed, and deliberately no
-  // score ramp. Running the archived prototype and reading its computed
-  // styles showed exactly two node fills across 37 nodes: #a0aec0 for
-  // everything unlabelled and #4299e1 for the two seeds. The amber ramp came
-  // from BUILD.md B.6, and against grey edges it read as a clash rather than
-  // as information. Score is still available in the footer readout, and the
-  // prototype's own answer to "which candidates matter" was a minimum-score
-  // slider rather than a colour.
+  // CANDIDATE is shaded by publication year, oldest dim to newest bright.
+  //
+  // Two findings drove this. Connected Papers -- the closest tool to this one
+  // -- encodes publication year in node colour and citation count in node
+  // size, because a citation graph is inherently temporal and a flat mass of
+  // identical nodes hides its most obvious structure. And the earlier amber
+  // ramp failed not because encoding something in colour was wrong, but
+  // because it introduced a second saturated HUE that fought the edges.
+  //
+  // So this uses LIGHTNESS, not hue. Hue is fully spoken for -- blue seeds,
+  // green liked, red disliked, yellow highlight -- and lightness was the one
+  // free channel left. It is also colourblind-safe by construction: a
+  // single-hue lightness ramp survives every form of colour vision
+  // deficiency, which is more than the red/green pair this palette already
+  // relies on elsewhere can claim.
+  //
+  // `yearT` is normalised 0..1 across the graph's own range, so a corpus
+  // spanning 2015-2022 uses the full ramp rather than a sliver of a fixed
+  // scale. The midpoint lands near #a0aec0, the prototype's flat candidate
+  // grey, so a typical graph still reads as it did.
+  {
+    selector: 'node[state="CANDIDATE"]',
+    style: { "background-color": "mapData(yearT, 0, 1, #6b7a90, #dfe6ef)" },
+  },
 
   {
     selector: "edge",
@@ -191,7 +207,28 @@ export function diameterFor(citationCount: number | null | undefined): number {
   return radius * 2;
 }
 
-export function toElementData(node: GraphNodeOut) {
+export interface YearRange {
+  min: number;
+  max: number;
+}
+
+/**
+ * The graph's own year span, for normalising the candidate shade.
+ *
+ * Normalising against the graph rather than a fixed scale means a corpus
+ * covering 2015-2022 uses the whole ramp instead of a sliver of it. Papers
+ * with no year are excluded here and fall back to the midpoint below, which
+ * is the prototype's flat grey -- an unknown year should look ordinary, not
+ * like the oldest paper in the graph.
+ */
+export function yearRange(nodes: GraphNodeOut[]): YearRange {
+  const years = nodes.map((n) => n.year).filter((y): y is number => typeof y === "number");
+  if (years.length === 0) return { min: 0, max: 0 };
+  return { min: Math.min(...years), max: Math.max(...years) };
+}
+
+export function toElementData(node: GraphNodeOut, years: YearRange) {
+  const span = years.max - years.min;
   return {
     id: String(node.id),
     state: node.state,
@@ -199,6 +236,12 @@ export function toElementData(node: GraphNodeOut) {
     score: node.score ?? 0,
     diameter: diameterFor(node.citation_count),
     citations: node.citation_count ?? 0,
+    year: node.year,
+    // 0.5 for a missing year or a single-year graph: the midpoint of the ramp,
+    // which is the ordinary grey. Reporting 0 would draw an unknown year as
+    // the oldest paper present, which is a claim the data does not make.
+    yearT:
+      typeof node.year === "number" && span > 0 ? (node.year - years.min) / span : 0.5,
     paperType: node.paper_type ?? "UNKNOWN",
     title: node.title,
   };

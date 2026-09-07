@@ -23,7 +23,7 @@ import { useEffect, useRef } from "react";
 import cytoscape from "cytoscape";
 import fcose from "cytoscape-fcose";
 import type { GraphEdgeOut, GraphNodeOut } from "../api/client";
-import { stylesheet, toElementData, withLabelFlags } from "./stylesheet";
+import { stylesheet, toElementData, withLabelFlags, yearRange } from "./stylesheet";
 
 cytoscape.use(fcose);
 
@@ -245,6 +245,7 @@ export function GraphCanvas({
     const wanted = new Set(nodes.map((n) => String(n.id)));
     const scatter = seedScatter(nodes.map((n) => n.id));
     const labels = withLabelFlags(nodes);
+    const years = yearRange(nodes);
     let added = 0;
 
     instance.batch(() => {
@@ -255,7 +256,7 @@ export function GraphCanvas({
       });
 
       for (const node of nodes) {
-        const data = { ...toElementData(node), label: labels.get(node.id) };
+        const data = { ...toElementData(node, years), label: labels.get(node.id) };
         const existing = instance.getElementById(data.id);
         if (existing.nonempty()) {
           // Preserve `pinned`: a data() call replaces the whole object, which
