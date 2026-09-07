@@ -141,9 +141,12 @@ export default function App() {
   );
 }
 
+// The prototype's four, in its order. `candidate` is grey rather than amber:
+// running the archived UI showed unlabelled papers drawn flat #a0aec0, with
+// no score ramp anywhere.
 const SWATCHES: [string, string][] = [
   ["#4299e1", "seed"],
-  ["#d69e2e", "candidate"],
+  ["#a0aec0", "candidate"],
   ["#48bb78", "liked"],
   ["#fc8181", "disliked"],
 ];

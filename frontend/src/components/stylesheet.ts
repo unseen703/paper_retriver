@@ -39,6 +39,8 @@ const COLOR = {
 // The prototype's selection/neighbour colour. Yellow, not orange -- it is the
 // one hue not already carrying meaning in the node palette.
 const HIGHLIGHT = "#f6e05e";
+// `.link { stroke: #4a5568 }`. Edges stay this colour in every state.
+const EDGE = "#4a5568";
 
 export const stylesheet = [
   {
@@ -68,7 +70,8 @@ export const stylesheet = [
     style: {
       label: "data(label)",
       "font-size": 9,
-      color: "#a0aec0",
+      // `.node text { fill: #cbd5e0 }`, measured.
+      color: "#cbd5e0",
       "text-valign": "bottom",
       "text-margin-y": 3,
       "text-wrap": "ellipsis",
@@ -100,26 +103,32 @@ export const stylesheet = [
       "border-color": "#742a2a",
     },
   },
-  // Grey at score 0, amber at the top -- so a strong candidate reads as
-  // interesting without becoming a fifth colour to learn.
-  {
-    selector: 'node[state="CANDIDATE"]',
-    style: { "background-color": "mapData(score, 0, 4, #a0aec0, #d69e2e)" },
-  },
+  // CANDIDATE keeps the base grey -- no rule needed, and deliberately no
+  // score ramp. Running the archived prototype and reading its computed
+  // styles showed exactly two node fills across 37 nodes: #a0aec0 for
+  // everything unlabelled and #4299e1 for the two seeds. The amber ramp came
+  // from BUILD.md B.6, and against grey edges it read as a clash rather than
+  // as information. Score is still available in the footer readout, and the
+  // prototype's own answer to "which candidates matter" was a minimum-score
+  // slider rather than a colour.
 
   {
     selector: "edge",
     style: {
-      width: "mapData(influential, 0, 1, 0.8, 1.8)",
-      "line-color": "#4a5568",
+      // `.link { stroke: #4a5568; stroke-opacity: 0.5; stroke-width: 1 }`,
+      // measured off the running prototype. Flat -- no width or opacity ramp
+      // on influence. Edges are the substrate you read the nodes against, and
+      // anything that makes them compete for attention makes the graph
+      // harder to read, which is what the amber-node/yellow-edge combination
+      // was doing.
+      width: 1,
+      "line-color": EDGE,
       "curve-style": "straight",
       "target-arrow-shape": "triangle",
-      "target-arrow-color": "#4a5568",
+      "target-arrow-color": EDGE,
       "arrow-scale": 0.55,
-      // The prototype drew links at stroke-opacity 0.5; influential edges get
-      // a little more so they read as the stronger claim.
-      opacity: "mapData(influential, 0, 1, 0.5, 0.85)",
-      "transition-property": "line-color, opacity",
+      opacity: 0.5,
+      "transition-property": "opacity",
       "transition-duration": "120ms",
     },
   },
@@ -128,21 +137,25 @@ export const stylesheet = [
   // The hovered node and its neighbourhood stay lit; everything else drops
   // back. This is what makes a dense graph readable: you trace one paper's
   // connections by pointing at it rather than by squinting.
-  // The prototype highlighted through the STROKE and left the fill alone --
-  // `.node.neighbor circle { stroke: #f6e05e; stroke-width: 2.5 }`. Keeping
-  // the fill means a highlighted node still reports its state and score while
-  // it is lit, which a colour change would overwrite.
+  // `.node.neighbor circle { stroke: #f6e05e; stroke-width: 2.5 }` -- a RING,
+  // with the fill untouched. So a lit node still reports its state, and the
+  // highlight adds information instead of replacing it.
   {
     selector: "node.hl",
     style: { "border-width": 2.5, "border-color": HIGHLIGHT, "z-index": 20 },
   },
-  {
-    selector: "edge.hl",
-    style: { "line-color": HIGHLIGHT, "target-arrow-color": HIGHLIGHT, opacity: 1, width: 1.8 },
-  },
-  // 0.06, the prototype's `.link.dimmed`. Low enough that the faded part of
-  // the graph reads as context rather than as content competing for attention.
-  { selector: ".fade", style: { opacity: 0.06 } },
+  // Edges in the neighbourhood are NOT recoloured. The prototype has no
+  // `.link.highlight` rule at all: lit edges simply keep their normal grey
+  // while everything else dims, so the neighbourhood emerges by subtraction.
+  // Turning them yellow put a second saturated colour next to the node rings
+  // and made the two fight.
+  { selector: "edge.hl", style: { opacity: 0.75 } },
+  // Two different dim levels, both from the prototype: `.link.dimmed` is 0.06
+  // and `.node.dimmed circle` is 0.10. Nodes need the extra because a circle
+  // at 0.06 against #0f1117 is invisible, and a graph that appears to lose
+  // half its nodes on hover is alarming rather than helpful.
+  { selector: "node.fade", style: { opacity: 0.1 } },
+  { selector: "edge.fade", style: { opacity: 0.06 } },
   {
     selector: "node:selected",
     style: { "border-width": 3, "border-color": HIGHLIGHT, "z-index": 30 },
