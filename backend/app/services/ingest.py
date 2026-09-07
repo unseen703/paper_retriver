@@ -73,6 +73,7 @@ def ingest_neighbour(
     as_of_year: int,
     stats: IngestStats | None = None,
     depth: int = 1,
+    admit: bool = True,
 ) -> FilterDecision:
     """
     Store one fetched neighbour and its edge, then decide graph admission.
@@ -110,7 +111,12 @@ def ingest_neighbour(
     )
 
     if decision.outcome is Outcome.ACCEPT:
-        graph_repo.add_node(conn, session_id, neighbour_id, "CANDIDATE", depth=depth)
+        # `admit=False` when a later stage owns admission. The expansion
+        # (R1.11) ranks and budgets before adding nodes, so ingesting one
+        # here would put every accepted paper in the graph regardless of
+        # max_new.
+        if admit:
+            graph_repo.add_node(conn, session_id, neighbour_id, "CANDIDATE", depth=depth)
         stats.admitted += 1
         return decision
 

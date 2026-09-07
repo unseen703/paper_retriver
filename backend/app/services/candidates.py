@@ -34,6 +34,7 @@ from sqlalchemy import Connection
 from app.config import FiltersConfig
 from app.repo import edges as edges_repo
 from app.repo import events as events_repo
+from app.repo import filter_decisions as decisions_repo
 from app.repo import graph as graph_repo
 from app.repo import papers as papers_repo
 
@@ -103,18 +104,24 @@ def build_pool(
     Every candidate reachable from any frontier node, unioned, with
     `anchor_overlap` counted during the union.
 
-    Excluded: papers already in this session's graph, papers tombstoned in this
-    session, and the frontier itself. Exclusion is session-scoped -- a paper
-    removed in one workspace is still a candidate in another.
+    Excluded: the frontier itself, papers already in this session's graph,
+    papers tombstoned in this session, and papers whose filter verdict is not
+    ACCEPT. Exclusion is session-scoped -- a paper removed in one workspace is
+    still a candidate in another.
     """
     if not frontier:
         return []
 
     frontier_set = set(frontier)
+    # BUILD.md's stage-4 exclusion, all three clauses. The filter_decisions
+    # clause is the one that is easy to omit and impossible to notice: a
+    # rejected paper has a decision row but no graph node, so nothing else
+    # keeps it out of the pool.
     excluded = (
         frontier_set
         | graph_repo.get_node_ids(conn, session_id)
         | events_repo.removed_paper_ids(conn, session_id)
+        | decisions_repo.non_accepted_paper_ids(conn, session_id)
     )
 
     # Hub anchors contribute their references but not their citations.
