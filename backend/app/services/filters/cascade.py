@@ -26,6 +26,7 @@ paper the new rules exclude.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from sqlalchemy import Connection
@@ -87,7 +88,7 @@ def run_cascade(
     # Lambdas, not a tuple of results. A tuple would evaluate every stage before
     # the loop began, which returns the right verdict while doing none of the
     # short-circuiting the cheapest-first ordering exists for.
-    stages = (
+    stages: tuple[Callable[[], FilterDecision], ...] = (
         lambda: era_filter(paper, cfg),
         lambda: type_filter(paper, cfg, as_of_year),
         lambda: topic_filter(paper, cfg),
