@@ -4,6 +4,7 @@ from app.models.domain import (
     DISCOVERED_VIA,
     Author,
     CandidateFeatures,
+    CanonicalKey,
     CrawlState,
     Edge,
     FilterDecision,
@@ -16,12 +17,14 @@ from app.models.domain import (
     ScoredCandidate,
     VenueTier,
     normalize_title,
+    surname_of,
 )
 
 __all__ = [
     "DISCOVERED_VIA",
     "Author",
     "CandidateFeatures",
+    "CanonicalKey",
     "CrawlState",
     "Edge",
     "FilterDecision",
@@ -34,4 +37,5 @@ __all__ = [
     "ScoredCandidate",
     "VenueTier",
     "normalize_title",
+    "surname_of",
 ]

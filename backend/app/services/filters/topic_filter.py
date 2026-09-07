@@ -88,23 +88,37 @@ def _matches_category(category: str, patterns: list[str]) -> bool:
     return False
 
 
-def is_core_venue(venue: str | None, core_venues: list[str]) -> bool:
+def _build_venue_patterns() -> list[tuple[str, re.Pattern[str]]]:
     """
-    True if `venue` names one of the core venues, by acronym or expansion.
+    Compile once at import. `topic_filter` runs per candidate and an expansion
+    considers thousands, so rebuilding fifteen patterns per paper is avoidable
+    work directly on the hot path.
 
     Acronyms match on word boundaries, never as substrings: "ACL" occurs inside
-    "NAACL" and "EACL", and a substring test would be accidentally right there
-    and wrong on something like "Oracle".
+    both "NAACL" and "EACL" (and "Oracle"), where a substring test would be
+    right by accident and wrong elsewhere. Expansions are plain substrings --
+    they are long enough to be unambiguous.
     """
+    patterns: list[tuple[str, re.Pattern[str]]] = []
+    for acronym, expansions in VENUE_EXPANSIONS.items():
+        alternatives = [rf"\b{re.escape(acronym.lower())}\b"]
+        alternatives += [re.escape(e) for e in expansions]
+        patterns.append((acronym, re.compile("|".join(alternatives))))
+    return patterns
+
+
+_VENUE_PATTERNS = _build_venue_patterns()
+
+
+def is_core_venue(venue: str | None, core_venues: list[str]) -> bool:
+    """True if `venue` names one of `core_venues`, by acronym or expansion."""
     if not venue:
         return False
     normalized = venue.strip().lower()
-    for acronym in core_venues:
-        if re.search(rf"\b{re.escape(acronym.lower())}\b", normalized):
+    allowed = {v.lower() for v in core_venues}
+    for acronym, pattern in _VENUE_PATTERNS:
+        if acronym.lower() in allowed and pattern.search(normalized):
             return True
-        for expansion in VENUE_EXPANSIONS.get(acronym, ()):
-            if expansion in normalized:
-                return True
     return False
 
 

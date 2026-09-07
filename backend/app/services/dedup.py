@@ -24,15 +24,11 @@ from __future__ import annotations
 
 import re
 
-from app.models import Paper, normalize_title
+from app.models import CanonicalKey, Paper, normalize_title, surname_of
 
 # Only a trailing "v<digits>" is a version suffix. Splitting on "v" -- as the
 # BUILD.md sketch does -- would truncate any id that happens to contain one.
 _ARXIV_VERSION = re.compile(r"v\d+$")
-
-CanonicalKey = (
-    tuple[str, str] | tuple[str, str, str | None, int | None]  # doi/arxiv  # title
-)
 
 
 def strip_arxiv_version(arxiv_id: str) -> str:
@@ -51,10 +47,7 @@ def first_author_surname(paper: Paper) -> str | None:
     if not paper.authors:
         return None
     _, name = paper.authors[0]
-    parts = name.strip().split()
-    if not parts:
-        return None
-    return re.sub(r"[^\w]", "", parts[-1].lower(), flags=re.UNICODE) or None
+    return surname_of(name) or None
 
 
 def canonical_key(paper: Paper) -> CanonicalKey:
