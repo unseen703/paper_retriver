@@ -371,9 +371,48 @@ class S2Client:
         return authors
 
 
+class CachedOnlyS2Client(S2Client):
+    """
+    Reads the cache and nothing else. Any miss raises `CacheMiss`.
+
+    This is what makes the committed fixture DB a hard offline guarantee rather
+    than a convention. A mock transport can be bypassed by a code path that
+    builds its own client; this cannot, because there is no transport to reach.
+    A test that starts raising CacheMiss is telling you the fixture needs
+    extending -- rerun scripts/build_fixture_cache.py -- not that it should
+    quietly fall back to the network.
+    """
+
+    def __init__(self, cache: ResponseCache, **kwargs: Any) -> None:
+        kwargs.pop("transport", None)
+        super().__init__(cache, transport=_ForbiddenTransport(), **kwargs)
+
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
+    ) -> Any | None:
+        key_params: dict[str, Any] = dict(params or {})
+        if json_body is not None:
+            key_params["__body"] = json_body
+        if not await self._cache.has(path, key_params):
+            raise CacheMiss(f"{method} {path} {key_params} is not in the fixture cache")
+        self.cache_hits += 1
+        return await self._cache.get(path, key_params)
+
+
+class _ForbiddenTransport(httpx.AsyncBaseTransport):
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        raise CacheMiss(f"network access is disabled: {request.method} {request.url}")
+
+
 __all__ = [
     "BATCH_SIZE",
     "BASE_URL",
+    "CachedOnlyS2Client",
     "NEIGHBOR_FIELDS",
     "SEARCH_FIELDS",
     "CacheMiss",
