@@ -37,6 +37,7 @@ from app.services.candidates import build_pool
 ROOT = Path(__file__).resolve().parents[3]
 ALEMBIC_INI = ROOT / "backend" / "migrations" / "alembic.ini"
 SESSION = 1
+AS_OF = 2026
 
 
 @pytest.fixture
@@ -79,7 +80,7 @@ def test_a_candidate_cited_by_three_frontier_nodes_has_overlap_three(
     for anchor in anchors:
         edges_repo.upsert_edge(conn, anchor, shared, "BACKWARD")
 
-    pool = build_pool(conn, SESSION, anchors, cfg)
+    pool = build_pool(conn, SESSION, anchors, cfg, AS_OF)
     entry = next(e for e in pool if e.paper_id == shared)
     assert entry.anchor_overlap == 3
 
@@ -89,7 +90,7 @@ def test_a_candidate_cited_once_has_overlap_one(conn: Connection) -> None:
     lonely = _add(conn, "lonely")
     edges_repo.upsert_edge(conn, anchors[0], lonely, "BACKWARD")
 
-    pool = build_pool(conn, SESSION, anchors, cfg)
+    pool = build_pool(conn, SESSION, anchors, cfg, AS_OF)
     assert next(e for e in pool if e.paper_id == lonely).anchor_overlap == 1
 
 
@@ -104,7 +105,7 @@ def test_the_pool_is_a_union_not_a_per_node_top_k(conn: Connection) -> None:
         for cand in candidates:
             edges_repo.upsert_edge(conn, anchor, cand, "BACKWARD")
 
-    pool = build_pool(conn, SESSION, anchors, cfg)
+    pool = build_pool(conn, SESSION, anchors, cfg, AS_OF)
     ids = [e.paper_id for e in pool]
     assert sorted(ids) == sorted(candidates)
     assert len(ids) == len(set(ids))
@@ -120,7 +121,7 @@ def test_source_ids_record_which_anchors_reached_the_candidate(
     for anchor in anchors[:2]:
         edges_repo.upsert_edge(conn, anchor, shared, "BACKWARD")
 
-    pool = build_pool(conn, SESSION, anchors, cfg)
+    pool = build_pool(conn, SESSION, anchors, cfg, AS_OF)
     entry = next(e for e in pool if e.paper_id == shared)
     assert set(entry.source_ids) == set(anchors[:2])
 
@@ -130,12 +131,12 @@ def test_frontier_members_are_not_their_own_candidates(conn: Connection) -> None
     a = _add(conn, "a")
     b = _add(conn, "b")
     edges_repo.upsert_edge(conn, a, b, "BACKWARD")
-    pool = build_pool(conn, SESSION, [a, b], cfg)
+    pool = build_pool(conn, SESSION, [a, b], cfg, AS_OF)
     assert [e.paper_id for e in pool] == []
 
 
 def test_an_empty_frontier_yields_an_empty_pool(conn: Connection) -> None:
-    assert build_pool(conn, SESSION, [], cfg) == []
+    assert build_pool(conn, SESSION, [], cfg, AS_OF) == []
 
 
 def test_the_pool_is_deterministically_ordered(conn: Connection) -> None:
@@ -144,8 +145,8 @@ def test_the_pool_is_deterministically_ordered(conn: Connection) -> None:
     cands = [_add(conn, f"c{i}") for i in range(20)]
     for c in cands:
         edges_repo.upsert_edge(conn, anchor, c, "BACKWARD")
-    first = [e.paper_id for e in build_pool(conn, SESSION, [anchor], cfg)]
-    second = [e.paper_id for e in build_pool(conn, SESSION, [anchor], cfg)]
+    first = [e.paper_id for e in build_pool(conn, SESSION, [anchor], cfg, AS_OF)]
+    second = [e.paper_id for e in build_pool(conn, SESSION, [anchor], cfg, AS_OF)]
     assert first == second == sorted(first)
 
 
@@ -158,7 +159,7 @@ def test_a_reference_is_a_backward_candidate(conn: Connection) -> None:
     anchor = _add(conn, "anchor")
     cited = _add(conn, "cited")
     edges_repo.upsert_edge(conn, anchor, cited, "BACKWARD")
-    (entry,) = build_pool(conn, SESSION, [anchor], cfg)
+    (entry,) = build_pool(conn, SESSION, [anchor], cfg, AS_OF)
     assert entry.direction == "BACKWARD"
 
 
@@ -166,7 +167,7 @@ def test_a_citing_paper_is_a_forward_candidate(conn: Connection) -> None:
     anchor = _add(conn, "anchor")
     citing = _add(conn, "citing")
     edges_repo.upsert_edge(conn, citing, anchor, "FORWARD")
-    (entry,) = build_pool(conn, SESSION, [anchor], cfg)
+    (entry,) = build_pool(conn, SESSION, [anchor], cfg, AS_OF)
     assert entry.direction == "FORWARD"
 
 
@@ -184,7 +185,7 @@ def test_a_hub_produces_no_forward_candidates(conn: Connection) -> None:
     citing = _add(conn, "citing")
     edges_repo.upsert_edge(conn, citing, hub, "FORWARD")
 
-    pool = build_pool(conn, SESSION, [hub], cfg)
+    pool = build_pool(conn, SESSION, [hub], cfg, AS_OF)
     assert [e for e in pool if e.direction == "FORWARD"] == []
 
 
@@ -194,7 +195,7 @@ def test_a_hub_still_yields_backward_candidates(conn: Connection) -> None:
     cited = _add(conn, "cited")
     edges_repo.upsert_edge(conn, hub, cited, "BACKWARD")
 
-    pool = build_pool(conn, SESSION, [hub], cfg)
+    pool = build_pool(conn, SESSION, [hub], cfg, AS_OF)
     assert [e.paper_id for e in pool] == [cited]
 
 
@@ -206,7 +207,7 @@ def test_the_hub_skip_is_logged(conn: Connection, caplog: pytest.LogCaptureFixtu
     edges_repo.upsert_edge(conn, citing, hub, "FORWARD")
 
     with caplog.at_level("INFO"):
-        build_pool(conn, SESSION, [hub], cfg)
+        build_pool(conn, SESSION, [hub], cfg, AS_OF)
     assert "HUB_SKIP_FORWARD" in caplog.text
 
 
@@ -214,7 +215,7 @@ def test_the_hub_threshold_comes_from_config(conn: Connection) -> None:
     below = _add(conn, "below", citations=cfg.forward_expand_max - 1)
     citing = _add(conn, "citing")
     edges_repo.upsert_edge(conn, citing, below, "FORWARD")
-    assert len(build_pool(conn, SESSION, [below], cfg)) == 1
+    assert len(build_pool(conn, SESSION, [below], cfg, AS_OF)) == 1
 
 
 def test_only_the_hub_anchor_loses_its_forward_edges(conn: Connection) -> None:
@@ -226,7 +227,7 @@ def test_only_the_hub_anchor_loses_its_forward_edges(conn: Connection) -> None:
     edges_repo.upsert_edge(conn, citing_hub, hub, "FORWARD")
     edges_repo.upsert_edge(conn, citing_normal, normal, "FORWARD")
 
-    pool = build_pool(conn, SESSION, [hub, normal], cfg)
+    pool = build_pool(conn, SESSION, [hub, normal], cfg, AS_OF)
     assert [e.paper_id for e in pool] == [citing_normal]
 
 
@@ -243,7 +244,7 @@ def test_a_paper_already_in_the_graph_is_not_a_candidate(conn: Connection) -> No
     edges_repo.upsert_edge(conn, anchor, existing, "BACKWARD")
     graph_repo.add_node(conn, SESSION, existing, "CANDIDATE", depth=1)
 
-    assert build_pool(conn, SESSION, [anchor], cfg) == []
+    assert build_pool(conn, SESSION, [anchor], cfg, AS_OF) == []
 
 
 def test_a_tombstoned_paper_never_returns(conn: Connection) -> None:
@@ -258,7 +259,7 @@ def test_a_tombstoned_paper_never_returns(conn: Connection) -> None:
     edges_repo.upsert_edge(conn, anchor, removed, "BACKWARD")
     events_repo.append_event(conn, SESSION, removed, "REMOVED")
 
-    assert build_pool(conn, SESSION, [anchor], cfg) == []
+    assert build_pool(conn, SESSION, [anchor], cfg, AS_OF) == []
 
 
 def test_a_restored_paper_is_a_candidate_again(conn: Connection) -> None:
@@ -270,7 +271,7 @@ def test_a_restored_paper_is_a_candidate_again(conn: Connection) -> None:
     events_repo.append_event(conn, SESSION, paper, "REMOVED")
     events_repo.append_event(conn, SESSION, paper, "RESTORED")
 
-    assert [e.paper_id for e in build_pool(conn, SESSION, [anchor], cfg)] == [paper]
+    assert [e.paper_id for e in build_pool(conn, SESSION, [anchor], cfg, AS_OF)] == [paper]
 
 
 def test_exclusion_is_per_session(conn: Connection) -> None:
@@ -286,5 +287,5 @@ def test_exclusion_is_per_session(conn: Connection) -> None:
     edges_repo.upsert_edge(conn, anchor, paper, "BACKWARD")
     events_repo.append_event(conn, SESSION, paper, "REMOVED")
 
-    assert build_pool(conn, SESSION, [anchor], cfg) == []
-    assert [e.paper_id for e in build_pool(conn, 2, [anchor], cfg)] == [paper]
+    assert build_pool(conn, SESSION, [anchor], cfg, AS_OF) == []
+    assert [e.paper_id for e in build_pool(conn, 2, [anchor], cfg, AS_OF)] == [paper]

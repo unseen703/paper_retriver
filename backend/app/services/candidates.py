@@ -97,7 +97,7 @@ def build_pool(
     session_id: int,
     frontier: list[int],
     cfg: FiltersConfig,
-    as_of_year: int = 2026,
+    as_of_year: int,
 ) -> list[PoolEntry]:
     """
     Every candidate reachable from any frontier node, unioned, with
@@ -133,9 +133,14 @@ def build_pool(
 
     # Accumulate per candidate rather than per (anchor, candidate) pair -- that
     # accumulation IS anchor_overlap.
-    overlap: dict[int, int] = {}
-    sources: dict[int, list[int]] = {}
-    directions: dict[int, str] = {}
+    # A SET of anchors, not a running count. A mutual citation (A cites X and
+    # X cites A) produces two edges that both touch A, and counting edges gave
+    # that pair a free +2.0 on the dominant prescore term.
+    sources: dict[int, set[int]] = {}
+    # Every direction seen, resolved deterministically below. Keeping only the
+    # first would make the verdict depend on row order, and R1.10 allocates a
+    # budget floor per direction.
+    seen_directions: dict[int, set[str]] = {}
     intents: dict[int, set[str]] = {}
     influential: dict[int, bool] = {}
 
@@ -152,29 +157,30 @@ def build_pool(
         if direction == "FORWARD" and anchor in hub_ids:
             continue
 
-        overlap[candidate] = overlap.get(candidate, 0) + 1
-        sources.setdefault(candidate, []).append(anchor)
-        directions.setdefault(candidate, direction)
+        sources.setdefault(candidate, set()).add(anchor)
+        seen_directions.setdefault(candidate, set()).add(direction)
         intents.setdefault(candidate, set()).update(edge.intents)
         influential[candidate] = influential.get(candidate, False) or edge.is_influential
 
     papers = {
-        p.id: p for p in papers_repo.get_papers_by_ids(conn, sorted(overlap)) if p.id is not None
+        p.id: p for p in papers_repo.get_papers_by_ids(conn, sorted(sources)) if p.id is not None
     }
 
     # Sorted, so the pool is deterministic regardless of dict iteration order.
     return [
         PoolEntry(
             paper_id=paper_id,
-            anchor_overlap=overlap[paper_id],
+            anchor_overlap=len(sources[paper_id]),
             citation_count=papers[paper_id].citation_count,
             age_years=_age_years(papers[paper_id].year, as_of_year),
-            direction=directions[paper_id],
+            # BACKWARD when both apply: a reference list is bounded and
+            # deliberate, so it is the safer bucket to charge the budget to.
+            direction=("BACKWARD" if "BACKWARD" in seen_directions[paper_id] else "FORWARD"),
             intents=tuple(sorted(intents[paper_id])),
             is_influential=influential[paper_id],
             source_ids=tuple(sorted(sources[paper_id])),
         )
-        for paper_id in sorted(overlap)
+        for paper_id in sorted(sources)
         if paper_id in papers
     ]
 

@@ -20,3 +20,6 @@ legacy/cache/
 
 # stray papers dropped in the repo root are not source
 *.pdf
+
+# Runtime log: every S2 call ever made. Grows without bound.
+data/*.log
