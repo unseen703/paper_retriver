@@ -176,6 +176,42 @@ class FilterDecision:
 
 
 @dataclass(frozen=True, slots=True)
+class GraphNode:
+    """
+    One paper's presence in one session's graph.
+
+    `state` is the materialized projection of that paper's event log; the log in
+    `interaction_events` is the source of truth, and scripts/rebuild_state.py
+    (R2.3) reconstructs this from it.
+    """
+
+    session_id: int
+    paper_id: int
+    state: str  # SEED|CANDIDATE|LIKED|DISLIKED
+    depth: int
+    score: float | None = None
+    features: dict[str, Any] = field(default_factory=dict)
+    score_breakdown: dict[str, Any] = field(default_factory=dict)
+    added_by: int | None = None
+    pos_x: float | None = None
+    pos_y: float | None = None
+    community_id: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class InteractionEvent:
+    """Append-only. Never updated, never deleted -- it is the audit trail."""
+
+    id: int
+    session_id: int
+    paper_id: int
+    event_type: str  # SEED_ADDED|LIKED|DISLIKED|UNLABELED|REMOVED|RESTORED|GC_SWEPT
+    actor: str  # USER|SYSTEM
+    created_at: str
+    payload: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
 class CandidateFeatures:
     """One lane per ranking weight. Missing signal degrades, never raises."""
 
