@@ -61,6 +61,12 @@ class ExpansionResult:
     backward_fetched: int = 0
     forward_fetched: int = 0
     hub_skipped: int = 0
+    # Which papers this run actually admitted, sorted. BUILD.md's R1.18
+    # verification asks the endpoint to return them, and PLAN.md's async job
+    # shape carries the same list as `result_node_ids` -- so the expander
+    # reports what it added rather than making the caller diff the graph before
+    # and after, which would race with anything else writing to the session.
+    added_paper_ids: list[int] = field(default_factory=list)
     ingest: IngestStats = field(default_factory=IngestStats)
 
 
@@ -193,6 +199,7 @@ async def expand(
                 features={"anchor_overlap": entry.anchor_overlap},
                 added_by=result.expansion_id,
             )
+        result.added_paper_ids = sorted(entry.paper_id for entry, _ in selected)
         result.n_added = len(selected)
 
     result.api_calls = client.api_calls - calls_at_start

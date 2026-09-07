@@ -9,7 +9,7 @@ was asked, and the only place that surfaces is production.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -76,4 +76,68 @@ class RejectedResponse(BaseModel):
     detail: RejectionDetail
 
 
-__all__ = ["AddNodeRequest", "NodeResponse", "RejectedResponse", "RejectionDetail"]
+class NodeDetail(BaseModel):
+    """
+    Everything R1.22's `<NodeInspector>` renders.
+
+    Two kinds of fact, deliberately in one response because the panel shows
+    them together:
+
+        global      title, authors, venue, date, citations, type, categories
+        per-session state, depth, score, features, score_breakdown, degrees
+
+    The abstract is **not** here. CLAUDE.md is explicit that abstracts are
+    stored for embeddings only; shipping one per inspector click spends bytes
+    on something the design says is not for reading, and no LLM stage consumes
+    it.
+    """
+
+    paper_id: int
+    s2_paper_id: str
+    title: str
+    # Names in byline order. Only populated at all because of the R1.15
+    # author-name fix -- `paper_authors` was permanently empty before it.
+    authors: list[str] = Field(default_factory=list)
+    venue: str | None = None
+    year: int | None = None
+    publication_date: str | None = None
+    doi: str | None = None
+    arxiv_id: str | None = None
+
+    citation_count: int = 0
+    reference_count: int = 0
+    influential_citation_count: int = 0
+
+    paper_type: str | None = None
+    # The primary category is called out separately: cross-listing is the whole
+    # reason the topic filter exists, so an undifferentiated list would hide the
+    # field that actually decided admission.
+    primary_arxiv_category: str | None = None
+    arxiv_categories: list[str] = Field(default_factory=list)
+    crawl_state: str
+
+    state: str
+    depth: int
+    score: float | None = None
+    # Degrees within this session's graph, matching GET /graph. The inspector
+    # must not contradict the picture beside it.
+    in_degree: int = 0
+    out_degree: int = 0
+    features: dict[str, Any] = Field(default_factory=dict)
+    score_breakdown: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Per-term contributions to the score. Empty until R3 ships real"
+            " features -- present-and-empty so the UI renders 'unavailable'"
+            " from the shape rather than from a special case."
+        ),
+    )
+
+
+__all__ = [
+    "AddNodeRequest",
+    "NodeDetail",
+    "NodeResponse",
+    "RejectedResponse",
+    "RejectionDetail",
+]
