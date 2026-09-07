@@ -52,7 +52,8 @@ files = ["backend/app/services", "backend/app/models"]  # strict where it matter
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["backend/tests"]
-pythonpath = ["backend"]
+pythonpath = ["backend", "scripts"]
+markers = ["slow: shells out to the verify gate; deselected inside it"]
 # `dash` installs a pytest plugin that imports pydantic at collection time and
 # aborts the whole run when it is missing from the ambient interpreter. Nothing
 # here uses dash; disabling it keeps `make test` working outside the uv venv.
