@@ -18,7 +18,11 @@ from app.db import db_url, make_engine
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers defaults to True, which silently switches OFF
+    # every logger created before the migration ran -- including the whole
+    # app.* tree. A process that migrates then serves would lose all its
+    # logging, and in tests it makes caplog capture nothing.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # No autogenerate: PLAN.md section C is written out by hand in 0001_baseline,
 # and the domain models are deliberately not ORM entities (CLAUDE.md: Core, not
