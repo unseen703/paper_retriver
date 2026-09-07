@@ -28,6 +28,7 @@ recommendations just quietly get worse.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from dataclasses import dataclass
 
@@ -95,11 +96,26 @@ def ingest_neighbour(
     if resolver is not None:
         (neighbour,) = resolver.enrich([neighbour])
 
-    # STUB: title, year, id. No metadata call -- a paper that may never be
-    # recommendable is not worth API budget (PLAN.md: "one row, no metadata
-    # call"). upsert_stub never downgrades an existing richer record.
-    neighbour_id = papers_repo.upsert_stub(
-        conn, neighbour.s2_paper_id, neighbour.title, neighbour.year
+    # Store everything the nested edge record carried, marked STUB.
+    #
+    # PLAN.md's rule is "one row, NO METADATA CALL" -- do not spend an API
+    # request on a paper that may never be recommendable. It does not say
+    # discard the fields that already arrived: NEIGHBOR_FIELDS asks for
+    # externalIds, venue and citationCount, and S2 returns them in the same
+    # response as the title.
+    #
+    # Writing only (id, title, year) cost all of that. arxiv_id in particular is
+    # the join key for the category, so losing it made the category
+    # unrecoverable without a second call for data already received; and
+    # citation_count defaulting to 0 zeroed the prescore's citations-per-year
+    # term for every candidate, which is why the first R1.13 run scored all
+    # twenty at exactly 2.0.
+    #
+    # crawl_state records how the row was obtained, not how many columns it
+    # happens to have, so this is still a STUB -- and upsert_paper's downgrade
+    # guard still protects any richer existing record.
+    neighbour_id = papers_repo.upsert_paper(
+        conn, dataclasses.replace(neighbour, crawl_state=CrawlState.STUB)
     )
 
     if neighbour_id == anchor_id:
