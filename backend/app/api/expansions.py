@@ -55,7 +55,10 @@ async def create_expansion(
     # but it would fetch first, and fetching to admit zero papers is the one
     # outcome worth an error code.
     with engine.connect() as conn:
-        current = len(graph_repo.get_node_ids(conn, sid))
+        # A count, not the ids: materialising 2000 paper ids to take a
+        # length is the same over-fetch that made search scale with graph
+        # size, one endpoint over.
+        current = sum(graph_repo.count_by_state(conn, sid).values())
     if current >= params_in.max_nodes:
         raise HTTPException(
             status_code=422,

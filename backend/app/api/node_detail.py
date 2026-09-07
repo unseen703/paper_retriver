@@ -27,8 +27,7 @@ session, so the cost tracks the node's degree and not the graph's size.
 
 from __future__ import annotations
 
-import json
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path
 from sqlalchemy import Engine
@@ -45,18 +44,6 @@ router = APIRouter(prefix="/api/sessions", tags=["nodes"])
 def _byline(raw: tuple[tuple[str, str], ...]) -> list[str]:
     """(id, name) pairs in byline order -> names. Position carries meaning."""
     return [name for _, name in raw]
-
-
-def _loads(raw: Any) -> dict[str, Any]:
-    if isinstance(raw, dict):
-        return raw
-    if not raw:
-        return {}
-    try:
-        loaded = json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        return {}
-    return loaded if isinstance(loaded, dict) else {}
 
 
 @router.get("/{sid}/nodes/{paper_id}", response_model=NodeDetail)
@@ -109,8 +96,12 @@ def get_node_detail(
         score=node.score,
         in_degree=in_degree,
         out_degree=out_degree,
-        features=_loads(node.features),
-        score_breakdown=_loads(node.score_breakdown),
+        # Already decoded: repo.graph._row_to_node parses both columns, so
+        # GraphNode always carries dicts. A second tolerant decoder here
+        # would only ever hit its passthrough, while implying the fields
+        # might still be strings.
+        features=node.features,
+        score_breakdown=node.score_breakdown,
     )
 
 

@@ -50,8 +50,14 @@ from app.schemas.health import HealthResponse
 
 logger = logging.getLogger(__name__)
 
-# Explicit, not "*". The Vite dev server's default port.
-DEV_ORIGINS = ["http://localhost:5173"]
+# Explicit, not "*". The Vite dev server's port, in both spellings of
+# loopback: `localhost` and `127.0.0.1` are interchangeable in every
+# developer's head and are different origins to a browser. Listing only one
+# means the app silently fails when opened at the other -- every request
+# blocked in the console while the backend logs nothing at all, which points
+# debugging at the wrong process. Two entries, still an allowlist, still not
+# "*".
+DEV_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
 
 def get_engine() -> Engine:
