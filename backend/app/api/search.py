@@ -18,6 +18,14 @@ nothing; `POST /nodes` (R1.16) is the only path into the graph. If search
 wrote rows, its own `already_in_graph` flag would come back true on the second
 call and the user could never deliberately add anything.
 
+**The route carries `{sid}`, unlike PLAN.md's sketch of a bare `/api/search`.**
+The two flags are graph membership, not facts about a paper, and PLAN.md's own
+section C9 is the argument -- "you're modeling papers when you mean graph
+membership". Reading them from `settings.session_id` while `POST /nodes` wrote
+to the path's `sid` meant the dialog could show "not in graph" for a paper that
+was in the graph, then get a 409 when the user clicked it. Session-scoped state
+belongs on a session-scoped route.
+
 **Failures are 503, not 500.** S2 being down, rate-limited, or -- in tests --
 simply not holding the answer is an upstream availability problem the caller
 can retry, not a bug in this process. It is reported as such so the frontend
@@ -32,9 +40,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import Engine
 
-from app.api.deps import get_engine, get_s2_client
+from app.api.deps import existing_session, get_engine, get_s2_client
 from app.clients.s2 import CacheMiss, S2Client, S2TransientError
-from app.config import settings
 from app.models import PaperStub
 from app.repo import events as events_repo
 from app.repo import graph as graph_repo
@@ -43,7 +50,7 @@ from app.schemas.search import SearchHit
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api", tags=["search"])
+router = APIRouter(prefix="/api/sessions", tags=["search"])
 
 # S2 caps `/paper/search` at 100 results per page. Asking for more is a client
 # bug, and a silent clamp would hide it.
@@ -51,7 +58,17 @@ MAX_LIMIT = 100
 
 
 def _annotate(engine: Engine, session_id: int, stubs: list[PaperStub]) -> list[SearchHit]:
-    """Attach this session's history to each hit. Three queries, not 3N."""
+    """
+    Attach this session's history to each hit. Three queries, not 3N -- and
+    all three scoped to the ids being annotated.
+
+    The scoping matters more than it looks. `get_node_ids` and
+    `removed_paper_ids` return the whole session, so annotating ten hits used
+    to pull every node id plus a correlated-max scan of the session's entire
+    event log. On a 2k-node graph behind a debounced search-as-you-type box
+    that is thousands of rows per keystroke to answer a question about ten
+    papers.
+    """
     known: dict[str, int] = {}
     in_graph: set[int] = set()
     removed: set[int] = set()
@@ -60,8 +77,9 @@ def _annotate(engine: Engine, session_id: int, stubs: list[PaperStub]) -> list[S
         with engine.connect() as conn:
             known = papers_repo.find_ids_by_s2_ids(conn, [s.s2_paper_id for s in stubs])
             if known:
-                in_graph = graph_repo.get_node_ids(conn, session_id)
-                removed = events_repo.removed_paper_ids(conn, session_id)
+                local_ids = list(known.values())
+                in_graph = graph_repo.nodes_present(conn, session_id, local_ids)
+                removed = events_repo.removed_among(conn, session_id, local_ids)
 
     hits: list[SearchHit] = []
     for stub in stubs:
@@ -83,8 +101,9 @@ def _annotate(engine: Engine, session_id: int, stubs: list[PaperStub]) -> list[S
     return hits
 
 
-@router.get("/search", response_model=list[SearchHit])
+@router.get("/{sid}/search", response_model=list[SearchHit])
 async def search(
+    sid: Annotated[int, Depends(existing_session)],
     q: Annotated[str, Query(description="Paper title to search for.")],
     # `Annotated` rather than a `Depends(...)` default: a call in a default
     # argument is evaluated once at import, which is a real bug for anything
@@ -118,7 +137,7 @@ async def search(
             detail=f"Semantic Scholar is unavailable and this query is not cached: {exc}",
         ) from exc
 
-    return _annotate(engine, settings.session_id, stubs)
+    return _annotate(engine, sid, stubs)
 
 
 __all__ = ["MAX_LIMIT", "router"]

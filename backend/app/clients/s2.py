@@ -72,6 +72,13 @@ NEIGHBOR_FIELDS = (
 BATCH_SIZE = 100
 MAX_NEIGHBORS = 1000
 
+# Ceiling on an honoured `Retry-After`, in seconds. S2 can answer a 429 with a
+# value in the thousands; obeying it literally would hold an HTTP request for
+# that long, since nothing above the client imposes a deadline. Five attempts
+# at 10s each is ~40s of waiting before the caller gets its 503, which is long
+# enough to ride out a burst and short enough that a browser has not given up.
+MAX_RETRY_AFTER = 10.0
+
 
 class S2TransientError(RuntimeError):
     """5xx that survived its retries. The caller continues; it does not abort."""
@@ -305,10 +312,20 @@ class S2Client:
             return
         if retry_after:
             try:
-                await asyncio.sleep(min(float(retry_after), 60.0))
-                return
+                honoured = float(retry_after)
             except ValueError:
-                pass
+                honoured = None
+            if honoured is not None:
+                # Capped at MAX_RETRY_AFTER, and scaled by the same base as the
+                # exponential ladder. Both matter now that these calls sit
+                # behind HTTP: S2 can answer a 429 with `Retry-After: 3600`, and
+                # obeying it literally would park a request handler for a
+                # minute per attempt with no deadline above it -- roughly four
+                # minutes before the client sees its 503. It also has to respect
+                # backoff_base, or a test that ever exercises this branch sleeps
+                # for real seconds while the ladder beside it does not.
+                await asyncio.sleep(min(honoured, MAX_RETRY_AFTER) * self._backoff_base)
+                return
         await asyncio.sleep(min(2.0 ** (attempt - 1), 30.0) * self._backoff_base)
 
     # -- public API ---------------------------------------------------------

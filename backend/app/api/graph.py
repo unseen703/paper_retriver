@@ -29,10 +29,10 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import Engine
 
-from app.api.deps import get_engine
+from app.api.deps import existing_session, get_engine
 from app.config import filters
 from app.models import NODE_STATES
 from app.repo import edges as edges_repo
@@ -51,9 +51,15 @@ def _parse_states(raw: str | None) -> list[str] | None:
     returning nothing for `states=SEDE` looks like the graph was wiped, and
     that is a bad way to learn you typed the parameter wrong.
     """
-    if raw is None:
+    wanted = [part.strip().upper() for part in (raw or "").split(",") if part.strip()]
+    if not wanted:
+        # Covers both an absent parameter and a present-but-empty one. A client
+        # that builds `states=${selected.join(",")}` sends `states=` whenever
+        # nothing is selected, and repo.graph.get_nodes reads `[]` as "none of
+        # these states" -- so the honest-looking query returned a blank canvas
+        # with a 200 and no error. That is the same "reads as data loss"
+        # failure that makes an unknown state a 422, arriving by another route.
         return None
-    wanted = [part.strip().upper() for part in raw.split(",") if part.strip()]
     unknown = sorted(set(wanted) - NODE_STATES)
     if unknown:
         raise HTTPException(
@@ -65,7 +71,7 @@ def _parse_states(raw: str | None) -> list[str] | None:
 
 @router.get("/{sid}/graph", response_model=GraphResponse)
 def get_graph(
-    sid: Annotated[int, Path(ge=1, description="Session id.")],
+    sid: Annotated[int, Depends(existing_session)],
     engine: Annotated[Engine, Depends(get_engine)],
     states: Annotated[
         str | None,

@@ -23,7 +23,10 @@ usable transport at all.
 
 from __future__ import annotations
 
-from sqlalchemy import Engine
+from typing import Annotated
+
+from fastapi import Depends, HTTPException, Path
+from sqlalchemy import Engine, text
 
 from app.clients.s2 import S2Client
 
@@ -65,4 +68,37 @@ def get_s2_client() -> S2Client:
     return _client
 
 
-__all__ = ["clear_runtime", "get_engine", "get_s2_client", "set_runtime"]
+def existing_session(
+    sid: Annotated[int, Path(ge=1, description="Session id.")],
+    engine: Annotated[Engine, Depends(get_engine)],
+) -> int:
+    """
+    Resolve `{sid}` to a session that actually exists, or 404.
+
+    Every session-scoped route depends on this, for two reasons.
+
+    **A write to an unknown session was a 500.** `graph_nodes.session_id` has a
+    foreign key and `db.py` sets `PRAGMA foreign_keys=ON`, so a bad id reached
+    SQLite and came back as a raw IntegrityError with a stack trace.
+
+    **A read of an unknown session was a 200 with an empty graph** -- which is
+    worse, because it is indistinguishable from a real but empty workspace. A
+    client holding a stale id after a database reset would render "no papers
+    yet" rather than an error, and then 500 on the first write.
+
+    It runs before the endpoint body, so an unknown id costs no S2 request.
+    """
+    with engine.connect() as conn:
+        found = conn.execute(text("SELECT 1 FROM sessions WHERE id = :sid"), {"sid": sid}).scalar()
+    if not found:
+        raise HTTPException(status_code=404, detail=f"no session {sid}")
+    return sid
+
+
+__all__ = [
+    "clear_runtime",
+    "existing_session",
+    "get_engine",
+    "get_s2_client",
+    "set_runtime",
+]

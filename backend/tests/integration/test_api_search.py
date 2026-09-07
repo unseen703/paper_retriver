@@ -82,7 +82,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
 
 
 def _search(client: TestClient, q: str = CACHED_TITLE) -> list[dict[str, object]]:
-    response = client.get("/api/search", params={"q": q})
+    response = client.get(f"/api/sessions/{settings.session_id}/search", params={"q": q})
     assert response.status_code == 200, response.text
     body = response.json()
     assert isinstance(body, list)
@@ -111,7 +111,12 @@ def _adopt(client: TestClient, s2_paper_id: str, title: str) -> int:
 
 
 def test_search_returns_200_for_a_cached_title(client: TestClient) -> None:
-    assert client.get("/api/search", params={"q": CACHED_TITLE}).status_code == 200
+    assert (
+        client.get(
+            f"/api/sessions/{settings.session_id}/search", params={"q": CACHED_TITLE}
+        ).status_code
+        == 200
+    )
 
 
 def test_search_returns_at_least_one_hit(client: TestClient) -> None:
@@ -151,7 +156,9 @@ def test_no_match_is_an_empty_list_not_an_error(client: TestClient) -> None:
     An unknown title is a valid answer, not a failure. The fixture holds an
     empty recorded response for exactly this query.
     """
-    response = client.get("/api/search", params={"q": "asdfqwerzxcv no such paper"})
+    response = client.get(
+        f"/api/sessions/{settings.session_id}/search", params={"q": "asdfqwerzxcv no such paper"}
+    )
     assert response.status_code in {200, 503}
 
 
@@ -270,16 +277,22 @@ def test_a_removal_in_another_session_does_not_count(client: TestClient) -> None
 
 def test_an_empty_query_is_a_400(client: TestClient) -> None:
     """PLAN.md names 400 specifically, not FastAPI's default 422."""
-    assert client.get("/api/search", params={"q": ""}).status_code == 400
+    assert (
+        client.get(f"/api/sessions/{settings.session_id}/search", params={"q": ""}).status_code
+        == 400
+    )
 
 
 def test_a_whitespace_only_query_is_a_400(client: TestClient) -> None:
-    assert client.get("/api/search", params={"q": "   "}).status_code == 400
+    assert (
+        client.get(f"/api/sessions/{settings.session_id}/search", params={"q": "   "}).status_code
+        == 400
+    )
 
 
 def test_a_missing_query_is_a_422(client: TestClient) -> None:
     """A missing required parameter is a schema violation, which is 422."""
-    assert client.get("/api/search").status_code == 422
+    assert client.get(f"/api/sessions/{settings.session_id}/search").status_code == 422
 
 
 def test_s2_unavailable_is_a_503_not_a_500(client: TestClient) -> None:
@@ -288,21 +301,38 @@ def test_s2_unavailable_is_a_503_not_a_500(client: TestClient) -> None:
     same shape of failure as S2 being down, and it must surface as "upstream
     unavailable" rather than as an unhandled server error.
     """
-    assert client.get("/api/search", params={"q": UNCACHED_TITLE}).status_code == 503
+    assert (
+        client.get(
+            f"/api/sessions/{settings.session_id}/search", params={"q": UNCACHED_TITLE}
+        ).status_code
+        == 503
+    )
 
 
 def test_the_503_body_explains_itself(client: TestClient) -> None:
-    body = client.get("/api/search", params={"q": UNCACHED_TITLE}).json()
+    body = client.get(
+        f"/api/sessions/{settings.session_id}/search", params={"q": UNCACHED_TITLE}
+    ).json()
     assert "detail" in body
 
 
 def test_a_negative_limit_is_rejected(client: TestClient) -> None:
-    assert client.get("/api/search", params={"q": CACHED_TITLE, "limit": 0}).status_code == 422
+    assert (
+        client.get(
+            f"/api/sessions/{settings.session_id}/search", params={"q": CACHED_TITLE, "limit": 0}
+        ).status_code
+        == 422
+    )
 
 
 def test_an_oversized_limit_is_rejected(client: TestClient) -> None:
     """S2 caps search at 100; asking for more is a client bug worth naming."""
-    assert client.get("/api/search", params={"q": CACHED_TITLE, "limit": 500}).status_code == 422
+    assert (
+        client.get(
+            f"/api/sessions/{settings.session_id}/search", params={"q": CACHED_TITLE, "limit": 500}
+        ).status_code
+        == 422
+    )
 
 
 # --------------------------------------------------------------------------
@@ -339,7 +369,9 @@ def test_the_query_is_trimmed_before_it_reaches_s2(client: TestClient) -> None:
     Whitespace around a pasted title is the normal case, and an untrimmed query
     is a different cache key -- so it would miss a cache that holds the answer.
     """
-    response = client.get("/api/search", params={"q": f"  {CACHED_TITLE}  "})
+    response = client.get(
+        f"/api/sessions/{settings.session_id}/search", params={"q": f"  {CACHED_TITLE}  "}
+    )
     assert response.status_code == 200
     assert len(response.json()) >= 1
 
@@ -351,7 +383,7 @@ def test_the_query_is_trimmed_before_it_reaches_s2(client: TestClient) -> None:
 
 def test_the_route_is_in_the_openapi_schema(client: TestClient) -> None:
     """`make types` at R1.20 generates the frontend's types from this."""
-    assert "/api/search" in client.get("/openapi.json").json()["paths"]
+    assert "/api/sessions/{sid}/search" in client.get("/openapi.json").json()["paths"]
 
 
 def test_the_response_model_is_declared(client: TestClient) -> None:
@@ -360,5 +392,5 @@ def test_the_response_model_is_declared(client: TestClient) -> None:
     the point of generating types at all.
     """
     schema = client.get("/openapi.json").json()
-    ok = schema["paths"]["/api/search"]["get"]["responses"]["200"]
+    ok = schema["paths"]["/api/sessions/{sid}/search"]["get"]["responses"]["200"]
     assert ok["content"]["application/json"]["schema"] != {}

@@ -140,6 +140,33 @@ def get_node_ids(conn: Connection, session_id: int) -> set[int]:
     return {row[0] for row in rows}
 
 
+def nodes_present(conn: Connection, session_id: int, paper_ids: list[int]) -> set[int]:
+    """
+    Which of `paper_ids` have a node in this session. Chunked.
+
+    `get_node_ids` returns the whole session, which is the right shape for the
+    exclusion pass (it needs every id anyway) and the wrong shape for
+    annotating a handful of search hits -- that pulled two thousand rows to
+    answer a question about ten papers, on every keystroke of a search-as-you-
+    type box.
+    """
+    if not paper_ids:
+        return set()
+    found: set[int] = set()
+    for start in range(0, len(paper_ids), 400):
+        chunk = paper_ids[start : start + 400]
+        placeholders = ",".join(f":p{i}" for i in range(len(chunk)))
+        rows = conn.execute(
+            text(
+                "SELECT paper_id FROM graph_nodes"
+                f" WHERE session_id = :session_id AND paper_id IN ({placeholders})"
+            ),
+            {"session_id": session_id, **{f"p{i}": v for i, v in enumerate(chunk)}},
+        )
+        found.update(row[0] for row in rows)
+    return found
+
+
 def remove_node(conn: Connection, session_id: int, paper_id: int) -> None:
     """
     Drop the node from this session's graph. Idempotent.
@@ -187,6 +214,7 @@ __all__ = [
     "count_by_state",
     "get_node_ids",
     "get_nodes",
+    "nodes_present",
     "remove_node",
     "set_position",
 ]

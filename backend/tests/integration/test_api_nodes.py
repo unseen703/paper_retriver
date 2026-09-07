@@ -114,7 +114,7 @@ def unknowing_client(tmp_path: Path) -> Iterator[TestClient]:
 
 def _s2_id(client: TestClient, title: str) -> str:
     """Resolve a fixture title to its S2 id through the search endpoint."""
-    response = client.get("/api/search", params={"q": title})
+    response = client.get(f"/api/sessions/{SID}/search", params={"q": title})
     assert response.status_code == 200, response.text
     hits = response.json()
     assert hits, f"fixture cache holds no search result for {title!r}"
@@ -200,7 +200,7 @@ def test_the_new_node_shows_up_in_search_as_already_in_graph(client: TestClient)
     """The round trip R1.22's dialog depends on."""
     s2_id = _s2_id(client, ACCEPTED_TITLE)
     _add(client, s2_id)
-    hits = client.get("/api/search", params={"q": ACCEPTED_TITLE}).json()
+    hits = client.get(f"/api/sessions/{SID}/search", params={"q": ACCEPTED_TITLE}).json()
     assert next(h for h in hits if h["s2_paper_id"] == s2_id)["already_in_graph"] is True
 
 

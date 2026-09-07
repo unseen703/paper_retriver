@@ -11,6 +11,11 @@ specifies, because each one means something different to the UI:
     422  the cascade rejected it                 offer `force`, naming the rule
     503  S2 unreachable and not cached           worth retrying
 
+An unknown `{sid}` is a 404 too, resolved by the `existing_session` dependency
+before the body runs. It used to reach SQLite and surface as a raw FOREIGN KEY
+IntegrityError -- a 500 -- and because the metadata fetch happened first, a
+typo'd session id spent an S2 request to learn the id was wrong.
+
 Collapsing 404 and 422 into one code would make the UI offer an override that
 cannot possibly work, which is why `add_seed` raises two distinct exceptions
 rather than one carrying a `NOT_FOUND` reason code.
@@ -28,10 +33,10 @@ import logging
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Path, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import Engine
 
-from app.api.deps import get_engine, get_s2_client
+from app.api.deps import existing_session, get_engine, get_s2_client
 from app.clients.s2 import CacheMiss, S2Client, S2TransientError
 from app.config import filters
 from app.models import GraphNode
@@ -66,7 +71,7 @@ def _to_response(engine: Engine, node: GraphNode) -> NodeResponse:
     responses={422: {"model": RejectedResponse}},
 )
 async def add_node(
-    sid: Annotated[int, Path(ge=1, description="Session id.")],
+    sid: Annotated[int, Depends(existing_session)],
     body: AddNodeRequest,
     client: Annotated[S2Client, Depends(get_s2_client)],
     engine: Annotated[Engine, Depends(get_engine)],
