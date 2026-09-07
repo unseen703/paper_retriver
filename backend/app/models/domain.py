@@ -54,6 +54,14 @@ class VenueTier(StrEnum):
 
 DISCOVERED_VIA = frozenset({"BACKWARD", "FORWARD", "BOTH"})
 
+# The user-facing state axis (PLAN.md "Two orthogonal state axes"). SEED and
+# CANDIDATE are written by the system; LIKED and DISLIKED are the user's
+# labels. Declared here because the API validates a `states=` filter against
+# it and the migration carries no CHECK constraint -- so without a named set,
+# a typo'd state silently returns an empty graph, which reads as data loss
+# rather than as a bad request.
+NODE_STATES = frozenset({"SEED", "CANDIDATE", "LIKED", "DISLIKED"})
+
 # ("doi", value) | ("arxiv", value) | ("title", norm, surname, year).
 # Declared here rather than in repo/ or services/ because BOTH build and
 # consume these keys, and two declarations drifted apart once already.
