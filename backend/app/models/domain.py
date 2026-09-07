@@ -1,0 +1,205 @@
+"""
+Domain dataclasses. No ORM, no DB, no HTTP.
+
+These are the objects that cross layer boundaries, so they are frozen: a filter
+cannot mutate the Paper it is judging, and a ranker cannot mutate the features
+it scored. Field names mirror PLAN.md section C so the repo layer is a
+transliteration rather than a translation.
+
+Every field S2 can omit is Optional (CLAUDE.md rule 6). S2 leaves `year`,
+`abstract` and `venue` null constantly; a required field there would turn a
+degraded score into a crash mid-expansion.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from enum import StrEnum
+from typing import Any
+
+
+class Outcome(StrEnum):
+    ACCEPT = "ACCEPT"
+    QUARANTINE = "QUARANTINE"
+    REJECT = "REJECT"
+
+
+class CrawlState(StrEnum):
+    """How much of a paper we actually hold. See PLAN.md section C design notes."""
+
+    STUB = "STUB"  # title + id only, from a nested edge fetch
+    METADATA = "METADATA"  # full record fetched
+    REFS_DONE = "REFS_DONE"
+    CITES_DONE = "CITES_DONE"
+    EXPANDED = "EXPANDED"
+
+
+class PaperType(StrEnum):
+    RESEARCH = "RESEARCH"
+    SURVEY = "SURVEY"
+    DATASET = "DATASET"
+    BENCHMARK = "BENCHMARK"
+    POSITION = "POSITION"
+    UNKNOWN = "UNKNOWN"
+
+
+class VenueTier(StrEnum):
+    A_STAR = "A_STAR"
+    A = "A"
+    OTHER = "OTHER"
+    PREPRINT = "PREPRINT"
+
+
+DISCOVERED_VIA = frozenset({"BACKWARD", "FORWARD", "BOTH"})
+
+_PUNCT = re.compile(r"[^\w\s]")
+_WS = re.compile(r"\s+")
+
+
+def normalize_title(title: str) -> str:
+    """
+    Lowercase, drop punctuation, collapse whitespace.
+
+    Punctuation is *deleted* rather than replaced with a space, so
+    "Pre-training" and "Pretraining" normalize identically -- that pair is the
+    common arXiv/conference duplicate the dedup stage (R1.3) has to catch.
+    """
+    return _WS.sub(" ", _PUNCT.sub("", title.lower())).strip()
+
+
+@dataclass(frozen=True, slots=True)
+class PaperStub:
+    """What a search hit or a nested edge fetch gives you. Never scoreable."""
+
+    s2_paper_id: str
+    title: str
+    year: int | None = None
+    citation_count: int | None = None
+    venue: str | None = None
+    external_ids: tuple[tuple[str, str], ...] = ()
+
+    @property
+    def title_norm(self) -> str:
+        return normalize_title(self.title)
+
+
+@dataclass(frozen=True, slots=True)
+class Paper:
+    s2_paper_id: str
+    title: str
+    first_seen_at: str
+
+    id: int | None = None
+    s2_corpus_id: int | None = None
+    canonical_paper_id: int | None = None
+
+    abstract: str | None = None
+    year: int | None = None
+    publication_date: str | None = None
+    venue: str | None = None
+    venue_tier: VenueTier | None = None
+
+    citation_count: int = 0
+    reference_count: int = 0
+    influential_citation_count: int = 0
+
+    doi: str | None = None
+    arxiv_id: str | None = None
+    primary_arxiv_category: str | None = None
+    # Tuples, not lists: a list field would make the frozen dataclass both
+    # unhashable and quietly mutable through the shared reference.
+    arxiv_categories: tuple[str, ...] = ()
+    s2_fields: tuple[str, ...] = ()
+    publication_types: tuple[str, ...] = ()
+
+    paper_type: PaperType = PaperType.UNKNOWN
+    crawl_state: CrawlState = CrawlState.STUB
+    metadata_fetched_at: str | None = None
+
+    @property
+    def title_norm(self) -> str:
+        return normalize_title(self.title)
+
+    @property
+    def is_stub(self) -> bool:
+        """Never compute features on a stub (PLAN.md section C, section I)."""
+        return self.crawl_state is CrawlState.STUB
+
+
+@dataclass(frozen=True, slots=True)
+class Author:
+    s2_author_id: str
+    name: str
+    id: int | None = None
+    # NULL until lazily fetched -- PLAN.md section C4. The S2 /references and
+    # /citations endpoints reject authors.hIndex outright.
+    h_index: int | None = None
+    citation_count: int | None = None
+    paper_count: int | None = None
+    fetched_at: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Edge:
+    """Direction is always citing -> cited."""
+
+    citing_id: int
+    cited_id: int
+    discovered_via: str
+    first_seen_at: str
+    is_influential: bool = False
+    intents: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        # Mirrors the CHECK constraint, so a bad edge fails where it was built
+        # rather than several layers later inside an INSERT.
+        if self.citing_id == self.cited_id:
+            raise ValueError(f"edge cannot be a self citation: {self.citing_id}")
+        if self.discovered_via not in DISCOVERED_VIA:
+            raise ValueError(
+                f"discovered_via must be one of {sorted(DISCOVERED_VIA)}, "
+                f"got {self.discovered_via!r}"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class FilterDecision:
+    outcome: Outcome
+    stage: str  # TYPE|TOPIC|APPLIED|DUPLICATE
+    reason_code: str  # IS_DATASET, LOW_CITE_SURVEY, CAT_NOT_ALLOWED, ...
+    details: dict[str, Any] = field(default_factory=dict)
+    # True -> written with session_id NULL and cached forever. A 2013 dataset
+    # paper is a 2013 dataset paper in every session (BUILD.md session_id
+    # contract). False -> a fact about *this* graph only.
+    is_global: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateFeatures:
+    """One lane per ranking weight. Missing signal degrades, never raises."""
+
+    paper_id: int
+    overlap: float = 0.0
+    quality: float = 0.0
+    recency: float = 0.0
+    hub: float = 0.0
+    ppr: float = 0.0
+    cocite: float = 0.0
+    bibcoup: float = 0.0
+    venue: float = 0.0
+    author: float = 0.0
+    dislike: float = 0.0
+
+
+@dataclass(frozen=True, slots=True)
+class ScoredCandidate:
+    paper_id: int
+    score: float
+    features: CandidateFeatures
+    # Per-term contributions. This is what powers the UI's "why is this here?"
+    breakdown: dict[str, float] = field(default_factory=dict)
+
+    def sort_key(self) -> tuple[float, int]:
+        """Stable ordering: best score first, paper_id breaking ties."""
+        return (-self.score, self.paper_id)
