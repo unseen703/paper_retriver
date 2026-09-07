@@ -46,6 +46,29 @@ AS_OF = 2026
 
 pytestmark = pytest.mark.skipif(not FIXTURE_DB.is_file(), reason="fixture cache absent")
 
+# The arXiv categories these fixtures need. The production database carries all
+# 3.16M rows from R0.10; a temp database has none, and without them the topic
+# filter's primary-category rung cannot fire -- which is exactly the bug this
+# module's wiring fixes, so the tests must supply the data rather than assume it.
+ARXIV_META = [
+    ("1810.04805", "cs.CL", ("cs.CL",)),  # BERT
+    ("1706.03762", "cs.CL", ("cs.CL", "cs.LG")),  # Attention
+    ("1512.03385", "cs.CV", ("cs.CV",)),  # ResNet
+    ("1301.3781", "cs.CL", ("cs.CL",)),  # word2vec
+    ("1502.03167", "cs.LG", ("cs.LG", "cs.CV")),  # Batch Normalization
+    ("2005.14165", "cs.CL", ("cs.CL",)),  # GPT-3
+]
+
+
+def _load_arxiv_meta(engine: Engine) -> None:
+    from app.clients.arxiv import ArxivRecord
+    from app.repo import arxiv_meta
+
+    arxiv_meta.load(
+        engine,
+        [ArxivRecord(i, primary, cats, "2020-01-01") for i, primary, cats in ARXIV_META],
+    )
+
 
 @pytest_asyncio.fixture
 async def env(tmp_path: Path) -> AsyncIterator[tuple[Engine, CachedOnlyS2Client]]:
@@ -55,6 +78,7 @@ async def env(tmp_path: Path) -> AsyncIterator[tuple[Engine, CachedOnlyS2Client]
     c.set_main_option("sqlalchemy.url", f"sqlite:///{db.as_posix()}")
     command.upgrade(c, "head")
     engine = make_engine(f"sqlite:///{db.as_posix()}")
+    _load_arxiv_meta(engine)
     fixture_engine = make_engine(f"sqlite:///{FIXTURE_DB.as_posix()}")
     client = CachedOnlyS2Client(cache=ResponseCache(fixture_engine))
     yield engine, client

@@ -30,6 +30,7 @@ from app.repo import graph as graph_repo
 from app.repo import papers as papers_repo
 from app.services.budget import allocate
 from app.services.candidates import build_pool, prescore
+from app.services.categories import CategoryResolver
 from app.services.ingest import IngestStats, ingest_neighbour
 
 logger = logging.getLogger(__name__)
@@ -74,6 +75,8 @@ async def expand(
 ) -> ExpansionResult:
     """Run one expansion for `session_id`. Never raises on budget exhaustion."""
     result = ExpansionResult()
+    # One resolver for the run: enrich() is a single bulk query per batch.
+    resolver = CategoryResolver(engine)
     calls_at_start = client.api_calls
     hits_at_start = client.cache_hits
 
@@ -155,6 +158,7 @@ async def expand(
                         as_of_year,
                         result.ingest,
                         admit=False,
+                        resolver=resolver,
                     )
         if result.truncated:
             break

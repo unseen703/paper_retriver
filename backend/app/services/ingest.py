@@ -38,6 +38,7 @@ from app.models import CrawlState, FilterDecision, Outcome, Paper
 from app.repo import edges as edges_repo
 from app.repo import graph as graph_repo
 from app.repo import papers as papers_repo
+from app.services.categories import CategoryResolver
 from app.services.filters.cascade import CascadeStats, run_cascade
 
 logger = logging.getLogger(__name__)
@@ -74,6 +75,7 @@ def ingest_neighbour(
     stats: IngestStats | None = None,
     depth: int = 1,
     admit: bool = True,
+    resolver: CategoryResolver | None = None,
 ) -> FilterDecision:
     """
     Store one fetched neighbour and its edge, then decide graph admission.
@@ -85,6 +87,13 @@ def ingest_neighbour(
     cites the neighbour, FORWARD means the neighbour cites the anchor.
     """
     stats = stats if stats is not None else IngestStats()
+
+    # Resolve the arXiv category BEFORE filtering. It is the topic stage's
+    # strongest signal and the only thing that can deny cs.CV; without it
+    # every paper falls through to the weak s2_fields rungs and the deny
+    # list never fires.
+    if resolver is not None:
+        (neighbour,) = resolver.enrich([neighbour])
 
     # STUB: title, year, id. No metadata call -- a paper that may never be
     # recommendable is not worth API budget (PLAN.md: "one row, no metadata
