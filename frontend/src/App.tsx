@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { api } from "./api/client";
+import { API_BASE, api } from "./api/client";
 import { useView } from "./store/view";
 import { GraphCanvas } from "./components/GraphCanvas";
 import { FIXTURE_EDGES, FIXTURE_NODES } from "./components/fixture";
@@ -53,7 +53,11 @@ export default function App() {
               : "…"}
         </span>
         <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
-          {health.isError && <span style={{ color: "salmon" }}>backend unreachable</span>}
+          {health.isError && (
+            <span style={{ color: "salmon" }} title={API_BASE}>
+              backend unreachable
+            </span>
+          )}
           {health.data && (
             <span style={{ color: "var(--muted)" }}>
               db {health.data.db} · s2 {health.data.s2_reachable}
@@ -73,7 +77,11 @@ export default function App() {
         )}
         {!showFixture && graph.isError && (
           <p style={{ position: "absolute", inset: "16px auto auto 16px", color: "salmon" }}>
-            Could not load the graph. Is the backend running on port 8000?
+            {/* Name the URL actually used, not the default. A hard-coded
+                "port 8000" sent debugging to the right port and the wrong
+                problem when VITE_API_BASE pointed somewhere else. */}
+            Could not reach the backend at <code>{API_BASE}</code>. Start it, or check
+            <code>frontend/.env.local</code> if that URL looks wrong.
           </p>
         )}
         {nodes.length === 0 && !graph.isPending && !graph.isError && !showFixture && (
