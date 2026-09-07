@@ -5,12 +5,12 @@ ToolRL: Reward is All Tool Learning Needs
 Empowering LLM Tool Invocation with Tool-Call Reward Model
 ReTool: Reinforcement Learning for Strategic Tool Use in LLMs
 AgentGym-RL: Training LLM Agents for Long-Horizon Decision Making through Multi-Turn Reinforcement Learning
-Attention Is All You Need
 DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning
 DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts Language Model
 Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks
 A-Mem: Agentic Memory for LLM Agents
 Memp: Exploring Agent Procedural Memory
 MemoryBank: Enhancing Large Language Models with Long-Term Memory
-BART: Denoising Sequence-to-Sequence Pre-training for Natural Language Generation, Translation, and Comprehension
-Improving Language Understanding by Generative Pre-Training
+Plan-and-Act: Improving Planning of Agents for Long-Horizon Tasks
+Multi-Agent Collaboration via Evolving Orchestration
+MEM1: Learning to Synergize Memory and Reasoning for Efficient Long-Horizon Agents
