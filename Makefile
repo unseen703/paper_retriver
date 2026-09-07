@@ -7,7 +7,7 @@ install:
 	 else echo "frontend/package.json not present yet (arrives at R1.20) -- skipping npm"; fi
 
 dev:
-	uv run uvicorn app.main:app --reload --port 8000 --app-dir backend
+	uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000 --app-dir backend
 
 # The whole gate in one command. Works in PowerShell, where `a && b` is a
 # parser error -- so prefer this over chaining the targets below.
