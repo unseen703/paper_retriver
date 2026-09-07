@@ -104,6 +104,23 @@ def test_applied_deny_includes_cs_cv_and_wildcards() -> None:
     assert "eess.*" in filters.applied_deny
 
 
+def test_cs_cv_is_never_an_allowed_subfield() -> None:
+    """
+    The deny list is where cs.CV belongs; the allow lists are where it must
+    never appear. Asserted separately from the deny-list test so that adding
+    cs.CV to CORE_ALLOW "just to see" fails loudly instead of silently
+    widening the corpus.
+    """
+    assert "cs.CV" not in filters.core_allow
+    assert "cs.CV" not in filters.borderline
+
+
+@pytest.mark.parametrize("category", ["cs.CV", "cs.RO", "cs.CR", "cs.SE", "cs.HC"])
+def test_applied_categories_are_not_also_allowed(category: str) -> None:
+    """A category in both lists would make the cascade order decide the verdict."""
+    assert not (category in filters.core_allow or category in filters.borderline)
+
+
 def test_core_venues_cover_the_main_ml_conferences() -> None:
     for venue in ("NeurIPS", "ICML", "ICLR", "ACL", "EMNLP", "JMLR", "TMLR"):
         assert venue in filters.core_venues
