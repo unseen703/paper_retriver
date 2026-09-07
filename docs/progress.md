@@ -6,7 +6,7 @@ observably true — not when its tasks are merely written.
 | Release | Gate | Done |
 |---|---|:--:|
 | R0 | Fetch twice → zero network calls on the second; `cs.CL` for BERT, `cs.CV` for ResNet | ✅ |
-| R1 | Browser: "BERT" → Expand ×2 → ~60 post-2015 core-ML nodes in <90s | ☐ |
+| R1 | Browser: "BERT" → Expand ×2 → ~60 post-2015 core-ML nodes in <90s | ◐ backend done (R1.1–R1.14); frontend is R1.20–R1.23 |
 | — | **Use it for a week. Keep an annoyance list.** | ☐ |
 | R2 | 20 min of curation: layout stable, no removed paper returns, every rejection reversible | ☐ |
 | R3 | One YAML weight change instantly reorders the candidate list; breakdown explains any rank | ☐ |
@@ -32,9 +32,23 @@ observably true — not when its tasks are merely written.
 | R0.10 — arXiv bulk loader | L | ✅ | 3,156,710 rows, 0 unparseable; watermark 2026-09-04 |
 | **R0.11 ◆ CHECKPOINT** | S | ✅ | BERT→cs.CL, ResNet→cs.CV, BatchNorm→cs.LG |
 | R0.12 — Structured logging | S | ✅ | `grep s2_request data/app.log` shows JSON lines |
-| R1.1 — repo/papers.py, repo/edges.py | M | next | — |
+| R1.1 — repo/papers.py, repo/edges.py | M | ✅ | 35 tests; session_id absent by contract |
+| R1.2 — repo/graph.py, repo/events.py | M | ✅ | 33 tests; session 1 invisible to session 2 |
+| R1.3 — services/dedup.py | M | ✅ | 33 tests; "Attention Is All You Need" vs its negation |
+| R1.4 — filters/base + era_filter | M | ✅ | 24 tests; None year quarantines |
+| R1.5 — type_filter + topic_filter | L | ✅ | 60 tests; cs.LG×cs.CV must pass |
+| R1.6 — filters/cascade + logging | M | ✅ | 27 tests; re-run gives cache_hits=4, evaluated=6 |
+| **R1.7 ◆ CHECKPOINT** | S | ✅ | 50 BERT refs: 26 accept, 15 PRE_ERA, 3 VENUE_CORE |
+| R1.8 — candidates: pool + prescore | L | ✅ | 35 tests; overlap==3, HUB_SKIP_FORWARD |
+| R1.9 — Boundary papers | M | ✅ | 15 tests; the bib-coupling design test |
+| R1.10 — services/budget.py | M | ✅ | 27 tests; budget=20 exact, no source over 8 |
+| R1.11 — services/expansion.py | L | ✅ | 15 tests; partial expansion is a success |
+| R1.12 — services/seed.py | M | ✅ | 16 tests; force logged, not silent |
+| **R1.13 ◆ CHECKPOINT** | M | ✅ | 21 nodes, 60 papers, 59 edges, scores 2.43→2.13 |
+| R1.14 — FastAPI app + health | S | ✅ | 17 tests; live curl, CORS allowlist verified |
+| R1.15 — GET /api/search | S | next | — |
 
-**R0 complete.** Suite at 327; full gate green.
+**R0 complete.** **R1 backend complete (R1.1–R1.14).** Suite at 742; full gate green.
 
 ## Prerequisites
 

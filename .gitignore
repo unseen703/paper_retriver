@@ -23,3 +23,9 @@ legacy/cache/
 
 # Runtime log: every S2 call ever made. Grows without bound.
 data/*.log
+
+# SQLite sidecars -- transient, rewritten on every connection.
+data/*.db-shm
+data/*.db-wal
+*.db-shm
+*.db-wal
