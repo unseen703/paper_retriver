@@ -272,3 +272,75 @@ def test_labelling_does_not_leak_across_sessions(client: TestClient, engine: Eng
 def test_the_route_is_in_the_openapi_schema(client: TestClient) -> None:
     paths = client.get("/openapi.json").json()["paths"]
     assert "patch" in paths["/api/sessions/{sid}/nodes/{paper_id}"]
+
+
+# --------------------------------------------------------------------------
+# The sweep that un-liking triggers
+# --------------------------------------------------------------------------
+
+
+def test_unliking_never_sweeps_the_paper_you_un_liked(client: TestClient, engine: Engine) -> None:
+    """
+    Un-liking the graph's only anchor leaves that paper a candidate reachable
+    from nothing -- including itself. Sweeping it would turn "unlike" into
+    "delete", which is a different verb with a different audit trail, and the
+    user asked to stop favouring a paper rather than to lose it.
+    """
+    paper_id = _node(engine, "lonely", "LIKED")
+    assert _patch(client, paper_id, "CANDIDATE").status_code == 200  # type: ignore[attr-defined]
+    assert _state(engine, paper_id) == "CANDIDATE"
+    assert _events(engine, paper_id) == ["UNLABELED"]
+
+
+def test_unliking_does_sweep_the_orphans_it_creates(client: TestClient, engine: Engine) -> None:
+    """
+    The other half. A candidate that hung off the liked node -- and off nothing
+    else -- loses its justification the moment that node stops being an anchor.
+    """
+    liked = _node(engine, "L", "LIKED")
+    orphan = _node(engine, "C", "CANDIDATE")
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO edges (citing_id, cited_id, discovered_via, first_seen_at)"
+                " VALUES (:a, :b, 'BACKWARD', '2026-01-01')"
+            ),
+            {"a": orphan, "b": liked},
+        )
+
+    _patch(client, liked, "CANDIDATE")
+
+    with engine.connect() as conn:
+        remaining = {
+            r[0]
+            for r in conn.execute(
+                text("SELECT paper_id FROM graph_nodes WHERE session_id = :s"), {"s": SID}
+            )
+        }
+    assert liked in remaining, "the un-liked paper itself is protected"
+    assert orphan not in remaining, "its dependent lost its only justification"
+
+
+def test_a_swept_orphan_is_attributed_to_the_system(client: TestClient, engine: Engine) -> None:
+    """The user un-liked one paper; they did not remove the other."""
+    liked = _node(engine, "L", "LIKED")
+    orphan = _node(engine, "C", "CANDIDATE")
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO edges (citing_id, cited_id, discovered_via, first_seen_at)"
+                " VALUES (:a, :b, 'BACKWARD', '2026-01-01')"
+            ),
+            {"a": orphan, "b": liked},
+        )
+    _patch(client, liked, "CANDIDATE")
+
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT event_type, actor FROM interaction_events"
+                " WHERE session_id=:s AND paper_id=:p"
+            ),
+            {"s": SID, "p": orphan},
+        ).fetchall()
+    assert rows == [("GC_SWEPT", "SYSTEM")]
