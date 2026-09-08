@@ -4,6 +4,9 @@ import { API_BASE, api } from "./api/client";
 import { useView } from "./store/view";
 import { GraphCanvas } from "./components/GraphCanvas";
 import { FIXTURE_EDGES, FIXTURE_NODES } from "./components/fixture";
+import { AddPaperDialog } from "./components/AddPaperDialog";
+import { ExpansionControls } from "./components/ExpansionControls";
+import { NodeInspector } from "./components/NodeInspector";
 
 /**
  * The shell around the canvas: a legend, a couple of view controls, and a
@@ -25,6 +28,7 @@ export default function App() {
   const setSelected = useView((s) => s.setSelected);
 
   const [showFixture, setShowFixture] = useState(false);
+  const [dialogOpen, setDialogOpen] = useState(false);
   const [hoveredId, setHoveredId] = useState<number | null>(null);
   const [relayoutToken, setRelayoutToken] = useState(0);
 
@@ -45,14 +49,21 @@ export default function App() {
     [nodes, hoveredId, selectedId],
   );
 
-  const detail = useQuery({
-    queryKey: ["node", sessionId, selectedId],
-    queryFn: () => api.node(sessionId, selectedId as number),
-    enabled: !showFixture && selectedId != null,
-  });
-
   return (
-    <div style={{ height: "100%", display: "grid", gridTemplateRows: "auto 1fr auto" }}>
+    <div
+      style={{
+        height: "100%",
+        display: "grid",
+        gridTemplateRows: "auto 1fr auto",
+        // `minmax(0, 1fr)`, not the implicit `auto`. A grid column sized by
+        // content lets its children push past the viewport, so opening the
+        // inspector rendered it at x=1280 -- entirely off the right edge --
+        // instead of narrowing the canvas beside it. The canvas is a flex
+        // child with `flex: 1` and `minWidth: 0`, which can only shrink if the
+        // column it sits in is itself bounded.
+        gridTemplateColumns: "minmax(0, 1fr)",
+      }}
+    >
       <header style={headerStyle}>
         <strong style={{ fontSize: 14 }}>Citation graph</strong>
         <span style={{ color: "var(--muted)" }}>
@@ -77,6 +88,10 @@ export default function App() {
               db {health.data.db} · s2 {health.data.s2_reachable}
             </span>
           )}
+          <button onClick={() => setDialogOpen(true)} disabled={showFixture}>
+            + Add paper
+          </button>
+          <ExpansionControls sessionId={sessionId} disabled={showFixture} />
           <button onClick={() => setRelayoutToken((t) => t + 1)} title="Re-run the layout">
             Tidy
           </button>
@@ -86,7 +101,8 @@ export default function App() {
         </span>
       </header>
 
-      <main style={{ position: "relative", minHeight: 0 }}>
+      <main style={{ display: "flex", minHeight: 0, minWidth: 0 }}>
+        <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
         {!showFixture && graph.isPending && <Overlay>Loading the graph…</Overlay>}
         {!showFixture && graph.isError && (
           <Overlay tone="error">
@@ -110,7 +126,19 @@ export default function App() {
           relayoutToken={relayoutToken}
         />
 
-        <p style={hintStyle}>drag to move · scroll to zoom · hover to trace · click to inspect</p>
+          <p style={hintStyle}>drag to move · scroll to zoom · hover to trace · click to inspect</p>
+        </div>
+
+        {/* The inspector is the detail query's only consumer now, so selecting
+            a node fetches once and renders everything rather than fetching to
+            show three author names in the footer. */}
+        {!showFixture && selectedId != null && (
+          <NodeInspector
+            sessionId={sessionId}
+            paperId={selectedId}
+            onClose={() => setSelected(null)}
+          />
+        )}
       </main>
 
       <footer style={footerStyle}>
@@ -124,23 +152,15 @@ export default function App() {
             {(shown.citation_count ?? 0).toLocaleString()} citations · in {shown.in_degree} / out{" "}
             {shown.out_degree}
             {shown.score != null ? ` · score ${shown.score.toFixed(2)}` : ""}
-            {/* Only when the inspector's answer is about the node on screen:
-                the query is keyed to the *selection*, so a hovered node would
-                otherwise borrow a different paper's byline. `authors` is
-                optional in the generated type because the schema gives it a
-                default. */}
-            {detail.data?.paper_id === shown.id && (detail.data?.authors?.length ?? 0) > 0 && (
-              <span style={{ color: "var(--muted)" }}>
-                {" "}
-                · {detail.data!.authors!.slice(0, 3).join(", ")}
-                {detail.data!.authors!.length > 3 ? " et al." : ""}
-              </span>
-            )}
           </span>
         ) : (
           <span>Hover a node to read it. Click to pin it here. Full inspector at R1.22.</span>
         )}
       </footer>
+
+      {dialogOpen && (
+        <AddPaperDialog sessionId={sessionId} onClose={() => setDialogOpen(false)} />
+      )}
     </div>
   );
 }
