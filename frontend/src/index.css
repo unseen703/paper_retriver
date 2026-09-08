@@ -10,7 +10,8 @@
  *   #4a5568  secondary       input borders, graph edges
  *   #e2e8f0  text
  *   #a0aec0  muted           secondary labels
- *   #718096  dim             stats, placeholders
+ *   #7d8ba1  dim             stats, placeholders (prototype's #718096, lifted
+                             to clear WCAG AA against --panel)
  *   #90cdf4  accent          headings
  *   #f6e05e  highlight       selection and hover, in the graph
  *
@@ -25,7 +26,10 @@
   --border-strong: #4a5568;
   --text: #e2e8f0;
   --muted: #a0aec0;
-  --dim: #718096;
+  /* #718096 is the prototype's value and measures 4.09:1 against --panel,
+     short of WCAG AA's 4.5:1 for normal text. Lifted just far enough to
+     clear it (4.72:1) while staying visibly secondary to --muted. */
+  --dim: #7d8ba1;
   --accent: #90cdf4;
   --highlight: #f6e05e;
 

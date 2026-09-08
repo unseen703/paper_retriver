@@ -104,6 +104,7 @@ export default function App() {
         <GraphCanvas
           nodes={nodes}
           edges={edges}
+          selectedId={selectedId}
           onSelect={setSelected}
           onHover={setHoveredId}
           relayoutToken={relayoutToken}
@@ -114,7 +115,10 @@ export default function App() {
 
       <footer style={footerStyle}>
         {shown ? (
-          <span>
+          // The line is nowrap-ellipsised, so on a narrow window the title is
+          // cut and the year, state, citations and degree after it are pushed
+          // off entirely. The title attribute is what makes that recoverable.
+          <span title={shown.title}>
             <strong style={{ color: "var(--text)" }}>{shown.title}</strong>
             {shown.year ? ` · ${shown.year}` : ""} · {shown.state} ·{" "}
             {(shown.citation_count ?? 0).toLocaleString()} citations · in {shown.in_degree} / out{" "}
@@ -144,18 +148,25 @@ export default function App() {
 // The prototype's four, in its order. `candidate` is grey rather than amber:
 // running the archived UI showed unlabelled papers drawn flat #a0aec0, with
 // no score ramp anywhere.
-const SWATCHES: [string, string][] = [
-  ["#4299e1", "seed"],
-  ["#a0aec0", "candidate"],
-  ["#48bb78", "liked"],
-  ["#fc8181", "disliked"],
+// `reachable` is false for states no code path can produce yet. Showing them
+// at full strength invites the reader to hunt for green and red nodes and
+// conclude the graph is broken when the truth is that labelling ships at R2.
+const SWATCHES: { color: string; label: string; reachable: boolean }[] = [
+  { color: "#4299e1", label: "seed", reachable: true },
+  { color: "#a0aec0", label: "candidate", reachable: true },
+  { color: "#48bb78", label: "liked", reachable: false },
+  { color: "#fc8181", label: "disliked", reachable: false },
 ];
 
 function Legend() {
   return (
     <span style={{ display: "flex", gap: 12, alignItems: "center", fontSize: 12 }}>
-      {SWATCHES.map(([color, label]) => (
-        <span key={label} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+      {SWATCHES.map(({ color, label, reachable }) => (
+        <span
+          key={label}
+          style={{ display: "flex", alignItems: "center", gap: 5, opacity: reachable ? 1 : 0.4 }}
+          title={reachable ? undefined : "Labelling arrives at R2"}
+        >
           <span
             style={{ width: 9, height: 9, borderRadius: "50%", background: color, flexShrink: 0 }}
           />
@@ -228,7 +239,11 @@ const hintStyle: React.CSSProperties = {
   right: 14,
   margin: 0,
   fontSize: 11,
+  // Full-strength --muted (7.28:1). It was --muted at 0.55 opacity, which
+  // composites to #5f6774 and measures 3.31:1 -- below WCAG AA, and on the one
+  // line that teaches the entire interaction model. Nothing else advertises
+  // that hovering traces a neighbourhood, so a reader who cannot see this
+  // never discovers it.
   color: "var(--muted)",
-  opacity: 0.55,
   pointerEvents: "none",
 };

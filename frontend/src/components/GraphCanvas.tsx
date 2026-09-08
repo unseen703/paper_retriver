@@ -22,10 +22,24 @@
 import { useEffect, useRef } from "react";
 import cytoscape from "cytoscape";
 import fcose from "cytoscape-fcose";
+import cola from "cytoscape-cola";
 import type { GraphEdgeOut, GraphNodeOut } from "../api/client";
 import { stylesheet, toElementData, withLabelFlags, yearRange } from "./stylesheet";
 
 cytoscape.use(fcose);
+// A SECOND layout engine, deliberately, and a documented departure from
+// CLAUDE.md's "Cytoscape.js + fcose" -- approved before adding it.
+//
+// The two do different jobs. fcose is a batch layout: it computes final
+// positions and stops, which is what you want for placing a graph. cola runs
+// a continuous constraint simulation, which is what makes a drag feel like
+// pulling on a net rather than sliding a sticker -- the archived prototype
+// got that from d3.forceSimulation running forever with alphaTarget bumped
+// during a drag, and nothing fcose exposes reproduces it.
+//
+// cola is a first-party Cytoscape extension, so the part of the lock that
+// matters -- not React Flow, not raw D3 -- is untouched.
+cytoscape.use(cola);
 
 // At R1 there are no communities, so edge length is constant. PLAN.md's
 // community-aware version (45 inside a cluster, 220 across) arrives with
@@ -85,6 +99,8 @@ function seedScatter(ids: number[]): Map<number, cytoscape.Position> {
 export interface GraphCanvasProps {
   nodes: GraphNodeOut[];
   edges: GraphEdgeOut[];
+  /** Currently selected paper, so keyboard navigation knows where it is. */
+  selectedId?: number | null;
   onSelect?: (paperId: number | null) => void;
   onHover?: (paperId: number | null) => void;
   /** Bumping this re-runs the layout, for a "tidy up" control. */
@@ -94,6 +110,7 @@ export interface GraphCanvasProps {
 export function GraphCanvas({
   nodes,
   edges,
+  selectedId = null,
   onSelect,
   onHover,
   relayoutToken = 0,
@@ -113,8 +130,16 @@ export function GraphCanvas({
   // the second started from wherever the first had got to -- which made the
   // final positions depend on timing, and broke determinism.
   const layoutRef = useRef<cytoscape.Layouts | null>(null);
+  // The continuous simulation, alive only while a drag is in flight.
+  const liveRef = useRef<cytoscape.Layouts | null>(null);
+  // The relayoutToken value the last layout ran for. Comparing against 0 meant
+  // the guard stopped working after the first Tidy click, so every subsequent
+  // refetch rearranged a graph the user had arranged by hand.
+  const lastTokenRef = useRef(0);
+  const selectedIdRef = useRef(selectedId);
   onSelectRef.current = onSelect;
   onHoverRef.current = onHover;
+  selectedIdRef.current = selectedId;
 
   // Mount once. The instance outlives every render.
   useEffect(() => {
@@ -174,12 +199,49 @@ export function GraphCanvas({
       }
     });
 
-    // --- drag: a moved node stays moved -----------------------------------
-    // `grabbable` is Cytoscape's default, but the free-drag handler matters:
-    // without it the next data sync would re-run the layout and undo the
-    // user's arrangement. Locking on drop makes the layout treat it as fixed.
+    // --- drag: the network follows, then settles --------------------------
+    //
+    // Dragging previously moved one node and nothing else: edges stretched
+    // rigidly and neighbours stayed put, because fcose had already finished.
+    // A cola simulation runs for the duration of the drag instead, so pulling
+    // a paper drags its neighbourhood with it and the graph relaxes when you
+    // let go -- the prototype's behaviour.
+    //
+    // It starts on grab and stops on release rather than running forever: a
+    // permanently live simulation means nodes drift under the cursor when you
+    // are trying to click one, and burns a frame budget continuously for a
+    // graph that is not moving.
+    instance.on("grab", "node", (event) => {
+      const node = event.target as cytoscape.NodeSingular;
+      // The grabbed node is the anchor -- it follows the pointer, and the
+      // simulation solves around it.
+      node.lock();
+      liveRef.current?.stop();
+      liveRef.current = instance.layout({
+        name: "cola",
+        infinite: true,
+        fit: false,
+        // Respect what the user has already placed; only unpinned nodes move.
+        handleDisconnected: true,
+        nodeSpacing: () => 12,
+        edgeLength: IDEAL_EDGE_LENGTH,
+        randomize: false,
+      } as cytoscape.LayoutOptions);
+      liveRef.current.run();
+    });
+
     instance.on("free", "node", (event) => {
-      (event.target as cytoscape.NodeSingular).data("pinned", true);
+      const node = event.target as cytoscape.NodeSingular;
+      node.unlock();
+      // Where the user put it is where it stays: the next batch layout treats
+      // it as a fixed constraint rather than a suggestion.
+      node.data("pinned", true);
+      // A short tail after release, so the graph eases to rest instead of
+      // freezing mid-motion.
+      window.setTimeout(() => {
+        liveRef.current?.stop();
+        liveRef.current = null;
+      }, 400);
     });
 
     cy.current = instance;
@@ -226,10 +288,16 @@ export function GraphCanvas({
     };
     const el = container.current;
     el.addEventListener("wheel", markAdjusted, { passive: true });
+    // Panning counts too. Tracking only the wheel meant a user who dragged the
+    // background to reach a distant cluster had that pan thrown away by the
+    // next window resize, while a zoom would have been respected -- which
+    // makes the behaviour look arbitrary rather than protective.
+    instance.on("dragpan", markAdjusted);
 
     return () => {
       observer.disconnect();
       el.removeEventListener("wheel", markAdjusted);
+      liveRef.current?.stop();
       instance.destroy();
       cy.current = null;
     };
@@ -297,13 +365,29 @@ export function GraphCanvas({
     });
 
     if (instance.nodes().length === 0) return;
-    // Nothing new arrived, so the existing arrangement is still correct.
-    // Re-running the layout here would rearrange a picture the user has
-    // learned every time the graph query refetched.
-    if (added === 0 && relayoutToken === 0) return;
 
-    // "Tidy" is an explicit request to rearrange, which includes re-framing.
-    if (relayoutToken > 0) userAdjusted.current = false;
+    // Did somebody press Tidy since the last layout? Comparing the token
+    // against its previous value, not against 0. Against 0 the guard stopped
+    // working the moment the counter left 0, so after one Tidy click every
+    // subsequent refetch silently rearranged a graph the user had arranged by
+    // hand.
+    const tidyRequested = relayoutToken !== lastTokenRef.current;
+    lastTokenRef.current = relayoutToken;
+
+    // Nothing new arrived and nobody asked: the existing arrangement is still
+    // correct, and re-running the layout would rearrange a picture the user
+    // has learned.
+    if (added === 0 && !tidyRequested) return;
+
+    // Re-frame when the view would otherwise hide the result.
+    //
+    // Tidy is an explicit request to rearrange, which includes re-framing. So
+    // is an expansion: new nodes are placed wherever the layout puts them, and
+    // after any zoom `userAdjusted` suppressed the auto-fit -- so 20 new
+    // papers could land outside the viewport while the header count climbed
+    // from 37 to 57 and the canvas appeared not to change. That reads as the
+    // expansion having failed.
+    if (tidyRequested || added > 0) userAdjusted.current = false;
     // A fresh graph -- every node new -- is laid out from the deterministic
     // scatter rather than from whatever happens to be on screen. That makes
     // the first layout idempotent, which it has to be: StrictMode runs this
@@ -315,7 +399,70 @@ export function GraphCanvas({
     layoutRef.current = runLayout(instance, freshGraph ? scatter : null);
   }, [nodes, edges, relayoutToken]);
 
-  return <div ref={container} style={{ width: "100%", height: "100%" }} />;
+  // Keyboard access. Cytoscape draws into a canvas, so there is no DOM for a
+  // screen reader and no focusable target for a keyboard -- without this the
+  // entire visualisation is skipped between the header buttons and the footer.
+  //
+  // Arrow keys walk the node list in the same stable order the API returns
+  // (by paper id), which is at least predictable; Home and End jump to the
+  // ends, Escape clears. Selecting through the keyboard drives exactly the
+  // same `onSelect` the mouse does, so the footer readout -- already a live
+  // region visually -- becomes the screen-reader output for free.
+  const step = (delta: number) => {
+    const instance = cy.current;
+    if (!instance || nodes.length === 0) return;
+    const ordered = [...nodes].sort((a, b) => a.id - b.id);
+    const current = ordered.findIndex((n) => n.id === selectedIdRef.current);
+    // No selection yet: Down/Right starts at the first node, Up/Left at the last.
+    const next =
+      current === -1
+        ? delta > 0
+          ? 0
+          : ordered.length - 1
+        : (current + delta + ordered.length) % ordered.length;
+    const node = ordered[next];
+    onSelectRef.current?.(node.id);
+    // Bring it into view and highlight it, so keyboard selection looks like
+    // hover selection rather than nothing happening.
+    const element = instance.getElementById(String(node.id));
+    instance.elements().removeClass("hl fade hover");
+    instance.elements().addClass("fade");
+    element.closedNeighborhood().removeClass("fade").addClass("hl");
+    element.addClass("hover");
+    instance.animate({ center: { eles: element } }, { duration: 200 });
+  };
+
+  return (
+    <div
+      ref={container}
+      // `application` rather than `img`: arrow keys mean "move the selection"
+      // here, so a screen reader has to stop intercepting them.
+      role="application"
+      aria-label={`Citation graph, ${nodes.length} papers. Use arrow keys to move between papers.`}
+      tabIndex={0}
+      onKeyDown={(event) => {
+        if (event.key === "ArrowDown" || event.key === "ArrowRight") {
+          event.preventDefault();
+          step(1);
+        } else if (event.key === "ArrowUp" || event.key === "ArrowLeft") {
+          event.preventDefault();
+          step(-1);
+        } else if (event.key === "Home") {
+          event.preventDefault();
+          selectedIdRef.current = null;
+          step(1);
+        } else if (event.key === "End") {
+          event.preventDefault();
+          selectedIdRef.current = null;
+          step(-1);
+        } else if (event.key === "Escape") {
+          onSelectRef.current?.(null);
+          cy.current?.elements().removeClass("hl fade hover");
+        }
+      }}
+      style={{ width: "100%", height: "100%", outline: "none" }}
+    />
+  );
 }
 
 function runLayout(
