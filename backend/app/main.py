@@ -29,30 +29,45 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import Engine, text
 
+from app.api import deps
+from app.api.expansions import router as expansions_router
+from app.api.graph import router as graph_router
+from app.api.node_detail import router as node_detail_router
+from app.api.nodes import router as nodes_router
+from app.api.search import router as search_router
+from app.clients.cache import ResponseCache
+from app.clients.s2 import S2Client
 from app.config import filters, settings
 from app.db import db_url as default_db_url
 from app.db import make_engine
 from app.logging_setup import bind_session, configure_logging
+from app.schemas.health import HealthResponse
 
 logger = logging.getLogger(__name__)
 
-# Explicit, not "*". The Vite dev server's default port.
-DEV_ORIGINS = ["http://localhost:5173"]
-
-_engine: Engine | None = None
+# Explicit, not "*". The Vite dev server's port, in both spellings of
+# loopback: `localhost` and `127.0.0.1` are interchangeable in every
+# developer's head and are different origins to a browser. Listing only one
+# means the app silently fails when opened at the other -- every request
+# blocked in the console while the backend logs nothing at all, which points
+# debugging at the wrong process. Two entries, still an allowlist, still not
+# "*".
+DEV_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
 
 def get_engine() -> Engine:
-    """The process-wide engine, opened by the lifespan handler."""
-    if _engine is None:  # pragma: no cover - lifespan always runs first
-        raise RuntimeError("engine not initialised; is the app running?")
-    return _engine
+    """
+    The process-wide engine, opened by the lifespan handler.
+
+    Kept as a re-export: the engine itself lives in `api.deps` so routers can
+    depend on it without importing this module, which would be a cycle.
+    """
+    return deps.get_engine()
 
 
 def create_app(db_url: str | None = None) -> FastAPI:
@@ -63,16 +78,22 @@ def create_app(db_url: str | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        global _engine
         configure_logging(level=settings.log_level)
         bind_session(session_id=settings.session_id)
-        _engine = make_engine(db_url or default_db_url())
+        engine = make_engine(db_url or default_db_url())
+        # One client for the process, not one per request: the rate limiter
+        # lives inside it, and a per-request client would give every request
+        # its own token bucket -- turning 1 req/sec into 1 req/sec *each*.
+        key = settings.s2_api_key.get_secret_value() if settings.s2_api_key else None
+        client = S2Client(cache=ResponseCache(engine), api_key=key, rate=settings.s2_rate_limit)
+        deps.set_runtime(engine, client)
         logger.info("api_startup config_version=%s", filters.config_version)
         try:
             yield
         finally:
-            _engine.dispose()
-            _engine = None
+            await client.aclose()
+            engine.dispose()
+            deps.clear_runtime()
 
     application = FastAPI(
         title="Citation-graph paper recommender",
@@ -86,9 +107,14 @@ def create_app(db_url: str | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    application.include_router(search_router)
+    application.include_router(nodes_router)
+    application.include_router(node_detail_router)
+    application.include_router(graph_router)
+    application.include_router(expansions_router)
 
-    @application.get("/api/health")
-    def health() -> dict[str, Any]:
+    @application.get("/api/health", response_model=HealthResponse)
+    def health() -> HealthResponse:
         """
         Is the database reachable, is S2 configured, how much is cached, and
         how big is the graph.
@@ -113,17 +139,17 @@ def create_app(db_url: str | None = None) -> FastAPI:
             logger.warning("health_db_unreachable: %s", exc)
             db_status = f"error: {type(exc).__name__}"
 
-        return {
-            "db": db_status,
+        return HealthResponse(
+            db=db_status,
             # Deliberately not a live probe -- see the module docstring.
-            "s2_reachable": "configured" if settings.s2_api_key else "no_api_key",
-            "cache_rows": cache_rows,
-            "node_count": node_count,
-            "session_id": settings.session_id,
+            s2_reachable="configured" if settings.s2_api_key else "no_api_key",
+            cache_rows=cache_rows,
+            node_count=node_count,
+            session_id=settings.session_id,
             # Which filters produced this graph is the first question when the
             # recommendations look wrong.
-            "config_version": filters.config_version,
-        }
+            config_version=filters.config_version,
+        )
 
     return application
 

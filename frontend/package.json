@@ -1,0 +1,44 @@
+{
+  "name": "paper-retriever-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "lint": "eslint .",
+    "typecheck": "tsc -b --noEmit",
+    "types": "openapi-typescript http://127.0.0.1:8000/openapi.json -o src/types/api.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.62.0",
+    "cytoscape": "^3.31.0",
+    "cytoscape-cola": "^2.5.1",
+    "cytoscape-fcose": "^2.2.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "zustand": "^5.0.2"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.7",
+    "@types/cytoscape": "^3.21.9",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "@vitest/coverage-v8": "^5.0.0",
+    "jsdom": "^30.0.1",
+    "openapi-typescript": "^7.5.0",
+    "typescript": "~5.7.2",
+    "vite": "^6.0.0",
+    "vitest": "^5.0.0"
+  },
+  "allowScripts": {
+    "esbuild@0.25.12": true
+  }
+}

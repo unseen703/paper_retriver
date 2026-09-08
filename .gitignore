@@ -29,3 +29,13 @@ data/*.db-shm
 data/*.db-wal
 *.db-shm
 *.db-wal
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+
+# Local env overrides -- never committed, and a stale one here silently
+# points the frontend at a port nothing is serving.
+frontend/.env.local
+frontend/.env.*.local

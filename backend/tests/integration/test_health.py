@@ -122,8 +122,23 @@ def test_the_config_version_is_reported(client: TestClient) -> None:
 
 def test_cors_is_an_explicit_allowlist_not_a_wildcard() -> None:
     """PLAN.md: "Not `*`, even locally -- it's one line and reviewers check"."""
-    assert DEV_ORIGINS == ["http://localhost:5173"]
     assert "*" not in DEV_ORIGINS
+    assert all(o.startswith("http://") and ":5173" in o for o in DEV_ORIGINS)
+
+
+def test_both_spellings_of_loopback_are_allowed() -> None:
+    """
+    `localhost` and `127.0.0.1` are interchangeable to a person and different
+    origins to a browser. Listing only one meant the app silently failed when
+    opened at the other -- every request blocked in the console while the
+    backend logged nothing, which points debugging at the wrong process.
+    """
+    assert set(DEV_ORIGINS) == {"http://localhost:5173", "http://127.0.0.1:5173"}
+
+
+def test_the_loopback_ip_origin_is_accepted(client: TestClient) -> None:
+    response = client.get("/api/health", headers={"Origin": "http://127.0.0.1:5173"})
+    assert response.headers.get("access-control-allow-origin") == "http://127.0.0.1:5173"
 
 
 def test_the_allowed_origin_is_accepted(client: TestClient) -> None:

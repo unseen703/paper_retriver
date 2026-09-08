@@ -49,6 +49,21 @@ class AlreadyPresent(SeedError):
         self.paper_id = paper_id
 
 
+class SeedNotFound(SeedError):
+    """
+    S2 has never heard of this id.
+
+    Distinct from `SeedRejected` because the answers differ: a rejected paper
+    can be forced, an unknown one cannot. Collapsing them would make the API
+    offer an override that could not possibly work, and would force callers to
+    string-match a `reason_code` to tell a 404 from a 422.
+    """
+
+    def __init__(self, s2_paper_id: str) -> None:
+        super().__init__(f"Semantic Scholar has no paper {s2_paper_id!r}")
+        self.s2_paper_id = s2_paper_id
+
+
 class SeedRejected(SeedError):
     """
     The cascade rejected the paper and `force` was not set.
@@ -78,47 +93,67 @@ async def add_seed(
     # a paper already fetched in another session costs nothing here.
     papers = await client.get_papers([s2_paper_id])
     if not papers:
-        raise SeedRejected("NOT_FOUND", "FETCH")
+        raise SeedNotFound(s2_paper_id)
     # Resolve the arXiv category before the cascade sees the paper -- the
     # topic stage's primary-category rung is what denies cs.CV, and it
     # cannot fire on an unenriched record.
     (paper,) = CategoryResolver(engine).enrich([papers[0]])
+
+    # Nothing raises inside this block. Raising here would roll the transaction
+    # back, and the two rows written before the failure are exactly the ones
+    # that must survive it:
+    #
+    #   papers            a rejected paper is still evidence. It has references
+    #                     the graph's papers share, so it still couples them --
+    #                     the same boundary-paper reasoning as `ingest.py`, and
+    #                     PLAN.md is explicit that rejection means "not
+    #                     recommendable", never "not stored".
+    #   filter_decisions  the verdict is meant to be cached forever. Discarding
+    #                     it means re-running the cascade on every retry of the
+    #                     same paper, and losing the audit trail of what was
+    #                     refused -- which is what R2.14's review drawer reads.
+    #
+    # So the decision is *made* inside the transaction and *reported* after it
+    # commits.
+    node: GraphNode | None = None
+    already_present = False
 
     with engine.begin() as conn:
         paper_id = papers_repo.upsert_paper(conn, paper)
         if paper.authors:
             papers_repo.set_authors(conn, paper_id, list(paper.authors))
 
-        if paper_id in graph_repo.get_node_ids(conn, session_id):
-            raise AlreadyPresent(paper_id)
+        already_present = paper_id in graph_repo.get_node_ids(conn, session_id)
 
         # Run the cascade even when forcing: the verdict is the record of what
         # was overridden.
         decision = run_cascade(conn, session_id, paper_id, paper, cfg, as_of_year)
         overridden = decision.outcome is not Outcome.ACCEPT
+        admit = not already_present and (not overridden or force)
 
-        if overridden and not force:
-            raise SeedRejected(decision.reason_code, str(decision.stage))
+        if admit:
+            if overridden:
+                logger.info(
+                    "SEED_FORCED paper_id=%s reason=%s stage=%s",
+                    paper_id,
+                    decision.reason_code,
+                    decision.stage,
+                )
+            graph_repo.add_node(conn, session_id, paper_id, "SEED", depth=0)
+            payload: dict[str, object] = {"s2_paper_id": s2_paper_id}
+            if overridden:
+                # `forced` is set only when an override actually happened, not
+                # merely when force was permitted.
+                payload["forced"] = True
+                payload["reason_code"] = decision.reason_code
+            events_repo.append_event(conn, session_id, paper_id, "SEED_ADDED", payload=payload)
+            (node,) = [n for n in graph_repo.get_nodes(conn, session_id) if n.paper_id == paper_id]
 
-        if overridden:
-            logger.info(
-                "SEED_FORCED paper_id=%s reason=%s stage=%s",
-                paper_id,
-                decision.reason_code,
-                decision.stage,
-            )
-
-        graph_repo.add_node(conn, session_id, paper_id, "SEED", depth=0)
-        payload: dict[str, object] = {"s2_paper_id": s2_paper_id}
-        if overridden:
-            # `forced` is set only when an override actually happened, not
-            # merely when force was permitted.
-            payload["forced"] = True
-            payload["reason_code"] = decision.reason_code
-        events_repo.append_event(conn, session_id, paper_id, "SEED_ADDED", payload=payload)
-
-        (node,) = [n for n in graph_repo.get_nodes(conn, session_id) if n.paper_id == paper_id]
+    if already_present:
+        raise AlreadyPresent(paper_id)
+    if node is None:
+        raise SeedRejected(decision.reason_code, str(decision.stage))
     return node
 
 
-__all__ = ["AlreadyPresent", "SeedError", "SeedRejected", "add_seed"]
+__all__ = ["AlreadyPresent", "SeedError", "SeedNotFound", "SeedRejected", "add_seed"]

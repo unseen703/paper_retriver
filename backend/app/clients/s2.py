@@ -38,16 +38,29 @@ logger = logging.getLogger(__name__)
 
 BASE_URL = "https://api.semanticscholar.org/graph/v1"
 
+# `authors.name` is NOT redundant next to `authors`, and leaving it out is a
+# silent data-loss bug rather than a cosmetic one. Naming ANY author sub-field
+# replaces S2's default author projection instead of extending it, so
+#   authors,authors.hIndex        -> [{"authorId": "...", "hIndex": 26}]
+#   authors.name,authors.hIndex   -> [{"authorId": "...", "name": "Ashish
+#                                      Vaswani", "hIndex": 26}]
+# Both verified live against /paper/search. Without the name, `to_paper` drops
+# every author (it requires both id and name), so `Paper.authors` came back
+# empty for every fetch -- which left `authors` and `paper_authors` at zero
+# rows, made dedup's canonical key fall back to its no-author variant on every
+# comparison, and would have shown an empty byline in R1.19's inspector.
 SEARCH_FIELDS = (
     "paperId,corpusId,title,abstract,year,publicationDate,venue,citationCount,"
     "referenceCount,influentialCitationCount,externalIds,publicationTypes,"
-    "fieldsOfStudy,authors,authors.hIndex"
+    "fieldsOfStudy,authors.name,authors.hIndex"
 )
 
 # The /paper/{id}/references and /paper/{id}/citations endpoints support a
 # NARROWER field set. Asking them for authors.hIndex returns
 #   {"error":"Unrecognized or unsupported fields: [authors.hIndex]"}
-# as a 400. Keep neighbour fetches on the supported set.
+# as a 400. Keep neighbour fetches on the supported set -- and note that bare
+# `authors` DOES include names, because no sub-field is named to displace the
+# default projection. That asymmetry is why only SEARCH_FIELDS needed the fix.
 NEIGHBOR_FIELDS = (
     "paperId,corpusId,title,abstract,year,publicationDate,venue,citationCount,"
     "referenceCount,influentialCitationCount,externalIds,publicationTypes,"
@@ -58,6 +71,13 @@ NEIGHBOR_FIELDS = (
 # poisons less, and a chunk failure costs less to retry.
 BATCH_SIZE = 100
 MAX_NEIGHBORS = 1000
+
+# Ceiling on an honoured `Retry-After`, in seconds. S2 can answer a 429 with a
+# value in the thousands; obeying it literally would hold an HTTP request for
+# that long, since nothing above the client imposes a deadline. Five attempts
+# at 10s each is ~40s of waiting before the caller gets its 503, which is long
+# enough to ride out a burst and short enough that a browser has not given up.
+MAX_RETRY_AFTER = 10.0
 
 
 class S2TransientError(RuntimeError):
@@ -158,6 +178,10 @@ def to_stub(raw: S2Paper) -> PaperStub | None:
         citation_count=raw.citationCount,
         venue=raw.venue,
         external_ids=tuple(sorted((k, str(v)) for k, v in (raw.externalIds or {}).items())),
+        # Unlike `to_paper`, a missing authorId is kept: this byline is only
+        # ever displayed, never joined, and dropping the unidentified authors
+        # would silently show the user a truncated author list.
+        authors=tuple(a.name for a in raw.authors if a.name),
     )
 
 
@@ -177,11 +201,18 @@ class S2Client:
         batch_size: int = BATCH_SIZE,
         max_attempts: int = 5,
         timeout: float = 30.0,
+        backoff_base: float = 1.0,
     ) -> None:
         self._cache = cache
         self._bucket = TokenBucket(rate=rate)
         self._batch_size = batch_size
         self._max_attempts = max_attempts
+        # Seconds for the first retry; doubles per attempt. Tests pass a tiny
+        # value so the retry paths stay fast. It must NOT be scaled down by
+        # default: a hard-coded 0.01 multiplier here made the whole backoff
+        # ladder 10ms->160ms, which is no backoff at all against a 429, and
+        # made the fixture rebuild fail on S2's rate limiter.
+        self._backoff_base = backoff_base
         headers = {"x-api-key": api_key} if api_key else {}
         self._http = httpx.AsyncClient(
             base_url=BASE_URL, headers=headers, transport=transport, timeout=timeout
@@ -281,11 +312,21 @@ class S2Client:
             return
         if retry_after:
             try:
-                await asyncio.sleep(min(float(retry_after), 60.0))
-                return
+                honoured = float(retry_after)
             except ValueError:
-                pass
-        await asyncio.sleep(min(2.0 ** (attempt - 1), 30.0) * 0.01)
+                honoured = None
+            if honoured is not None:
+                # Capped at MAX_RETRY_AFTER, and scaled by the same base as the
+                # exponential ladder. Both matter now that these calls sit
+                # behind HTTP: S2 can answer a 429 with `Retry-After: 3600`, and
+                # obeying it literally would park a request handler for a
+                # minute per attempt with no deadline above it -- roughly four
+                # minutes before the client sees its 503. It also has to respect
+                # backoff_base, or a test that ever exercises this branch sleeps
+                # for real seconds while the ladder beside it does not.
+                await asyncio.sleep(min(honoured, MAX_RETRY_AFTER) * self._backoff_base)
+                return
+        await asyncio.sleep(min(2.0 ** (attempt - 1), 30.0) * self._backoff_base)
 
     # -- public API ---------------------------------------------------------
 

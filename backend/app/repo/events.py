@@ -123,6 +123,44 @@ def latest_state(conn: Connection, session_id: int, paper_id: int) -> str | None
     ).scalar()
 
 
+def removed_among(conn: Connection, session_id: int, paper_ids: list[int]) -> set[int]:
+    """
+    Which of `paper_ids` are tombstoned in this session. Chunked.
+
+    Same relationship to `removed_paper_ids` as `graph.nodes_present` has to
+    `get_node_ids`: the unrestricted version scans every event row for the
+    session through a correlated max(id), which is the right cost when the
+    caller needs the whole exclusion set and badly wrong when it needs to
+    annotate ten search results.
+    """
+    if not paper_ids:
+        return set()
+    tombstones = ",".join(f":t{i}" for i in range(len(TOMBSTONE_EVENTS)))
+    found: set[int] = set()
+    for start in range(0, len(paper_ids), 400):
+        chunk = paper_ids[start : start + 400]
+        placeholders = ",".join(f":p{i}" for i in range(len(chunk)))
+        rows = conn.execute(
+            text(
+                "SELECT e.paper_id FROM interaction_events e"
+                " WHERE e.session_id = :session_id"
+                f"   AND e.paper_id IN ({placeholders})"
+                "   AND e.id = ("
+                "     SELECT MAX(inner_e.id) FROM interaction_events inner_e"
+                "     WHERE inner_e.session_id = e.session_id AND inner_e.paper_id = e.paper_id"
+                "   )"
+                f"   AND e.event_type IN ({tombstones})"
+            ),
+            {
+                "session_id": session_id,
+                **{f"p{i}": v for i, v in enumerate(chunk)},
+                **{f"t{i}": v for i, v in enumerate(TOMBSTONE_EVENTS)},
+            },
+        )
+        found.update(row[0] for row in rows)
+    return found
+
+
 def removed_paper_ids(conn: Connection, session_id: int) -> set[int]:
     """
     Papers whose latest event is a tombstone.
@@ -155,5 +193,6 @@ __all__ = [
     "append_event",
     "get_events",
     "latest_state",
+    "removed_among",
     "removed_paper_ids",
 ]

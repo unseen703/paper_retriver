@@ -28,6 +28,21 @@ from sqlalchemy import Connection, text
 from app.models import DISCOVERED_VIA, Edge
 
 
+def _loads_intents(raw: str | None) -> tuple[str, ...]:
+    """
+    Decode the stored intents JSON, tolerating anything unparseable.
+
+    Intents are advisory metadata, so a malformed value degrades the edge
+    rather than failing the read -- CLAUDE.md rule 6 applied to our own column.
+    """
+    if not raw:
+        return ()
+    try:
+        return tuple(json.loads(raw))
+    except (json.JSONDecodeError, TypeError):
+        return ()
+
+
 def _utcnow() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -113,6 +128,55 @@ def upsert_edge(
     )
 
 
+def get_edges_between(conn: Connection, paper_ids: list[int]) -> list[Edge]:
+    """
+    Only edges whose **both** endpoints are in `paper_ids`, ordered.
+
+    The induced subgraph, as opposed to `get_edges_for`'s neighbourhood. The
+    two are easy to confuse and the failure is quiet: rendering a
+    neighbourhood's edges gives you edges pointing at papers that have no node,
+    and a drawing tool must then either drop them or invent the missing node.
+    An invented node in a citation graph is indistinguishable from a real one.
+
+    Pooling wants the neighbourhood; drawing wants this.
+    """
+    if not paper_ids:
+        return []
+    out: list[Edge] = []
+    wanted = set(paper_ids)
+    for start in range(0, len(paper_ids), 400):
+        chunk = paper_ids[start : start + 400]
+        placeholders = ",".join(f":p{i}" for i in range(len(chunk)))
+        # Only one side is constrained in SQL; the other is checked in Python.
+        # Constraining both here would miss any edge whose endpoints land in
+        # different chunks.
+        rows = conn.execute(
+            text(
+                "SELECT citing_id, cited_id, discovered_via, is_influential, intents,"
+                " first_seen_at FROM edges"
+                f" WHERE citing_id IN ({placeholders})"
+            ),
+            {f"p{i}": v for i, v in enumerate(chunk)},
+        )
+        for row in rows:
+            if row[1] not in wanted:
+                continue
+            out.append(
+                Edge(
+                    citing_id=row[0],
+                    cited_id=row[1],
+                    discovered_via=row[2],
+                    is_influential=bool(row[3]),
+                    intents=_loads_intents(row[4]),
+                    first_seen_at=row[5],
+                )
+            )
+    # Stable order: CLAUDE.md rule 7, and a graph whose edges reorder between
+    # calls churns the layout for no reason.
+    out.sort(key=lambda e: (e.citing_id, e.cited_id))
+    return out
+
+
 def get_edges_for(conn: Connection, paper_ids: list[int]) -> list[Edge]:
     """
     Every edge touching any of `paper_ids`, in either direction.
@@ -140,21 +204,17 @@ def get_edges_for(conn: Connection, paper_ids: list[int]) -> list[Edge]:
             if key in seen:
                 continue
             seen.add(key)
-            try:
-                intents = tuple(json.loads(row[4])) if row[4] else ()
-            except (json.JSONDecodeError, TypeError):
-                intents = ()
             out.append(
                 Edge(
                     citing_id=row[0],
                     cited_id=row[1],
                     discovered_via=row[2],
                     is_influential=bool(row[3]),
-                    intents=intents,
+                    intents=_loads_intents(row[4]),
                     first_seen_at=row[5],
                 )
             )
     return out
 
 
-__all__ = ["get_edges_for", "upsert_edge"]
+__all__ = ["get_edges_between", "get_edges_for", "upsert_edge"]

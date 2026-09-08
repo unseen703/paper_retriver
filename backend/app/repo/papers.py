@@ -177,6 +177,31 @@ def find_by_s2_id(conn: Connection, s2_paper_id: str) -> int | None:
     ).scalar()
 
 
+def find_ids_by_s2_ids(conn: Connection, s2_paper_ids: list[str]) -> dict[str, int]:
+    """
+    s2_paper_id -> local id, for the ids that exist. One query, not N.
+
+    Ids absent from the corpus are simply absent from the mapping, so a caller
+    reads a miss as "we have never seen this paper" without a second lookup.
+    """
+    if not s2_paper_ids:
+        return {}
+    # Chunked at 400, matching `repo/edges.py`. One bind parameter per id would
+    # blow SQLite's SQLITE_MAX_VARIABLE_NUMBER on a large list, and the two
+    # neighbouring functions in this layer already establish the convention --
+    # so a caller reading them would reasonably assume this one is safe too.
+    found: dict[str, int] = {}
+    for start in range(0, len(s2_paper_ids), 400):
+        chunk = s2_paper_ids[start : start + 400]
+        placeholders = ",".join(f":s{i}" for i in range(len(chunk)))
+        rows = conn.execute(
+            text(f"SELECT s2_paper_id, id FROM papers WHERE s2_paper_id IN ({placeholders})"),
+            {f"s{i}": v for i, v in enumerate(chunk)},
+        )
+        found.update({row[0]: row[1] for row in rows})
+    return found
+
+
 def upsert_paper(conn: Connection, paper: Paper) -> int:
     """Insert or update by `s2_paper_id` in one statement. Returns the id."""
     row = conn.execute(

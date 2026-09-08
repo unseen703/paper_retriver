@@ -2,6 +2,7 @@
 
 from app.models.domain import (
     DISCOVERED_VIA,
+    NODE_STATES,
     Author,
     CandidateFeatures,
     CanonicalKey,
@@ -22,6 +23,7 @@ from app.models.domain import (
 
 __all__ = [
     "DISCOVERED_VIA",
+    "NODE_STATES",
     "Author",
     "CandidateFeatures",
     "CanonicalKey",

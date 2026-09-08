@@ -70,6 +70,35 @@ Accepted id forms: bare S2 id, `DOI:10.…`, `ARXIV:1706.03762`, `CorpusId:…`.
 The last row is CLAUDE.md rule 6: every S2 Pydantic field is Optional. A missing
 field degrades a score; it never crashes a run.
 
+## Field selection does not compose — naming a sub-field replaces the default
+
+Verified live against `/paper/search`, 2026-09-07:
+
+| `fields=` | `authors` in the response |
+|---|---|
+| `…,authors` | `[{"authorId": "40348417", "name": "Ashish Vaswani"}]` |
+| `…,authors,authors.hIndex` | `[{"authorId": "40348417", "hIndex": 26}]` — **no name** |
+| `…,authors.name,authors.hIndex` | `[{"authorId": "40348417", "name": "Ashish Vaswani", "hIndex": 26}]` |
+
+Naming **any** author sub-field replaces S2's default author projection instead
+of extending it. Listing bare `authors` alongside it does not restore the name.
+
+This cost real data before it was caught. `SEARCH_FIELDS` carried
+`authors,authors.hIndex`, so every author arrived without a name; `to_paper`
+requires both an id and a name, so it dropped all of them. Nothing raised and
+nothing logged. The consequences were entirely silent:
+
+- `authors` and `paper_authors` sat at **zero rows** in the live database
+- dedup's canonical key fell back to its no-author variant on every comparison
+- R1.19's inspector and R1.22's search list would have shown an empty byline
+
+`NEIGHBOR_FIELDS` was never affected because it names no sub-field — and it
+*cannot*, since `/references` and `/citations` reject `authors.hIndex` with a
+400. The two field sets differ for two independent reasons; keep them separate.
+
+Assume the same trap applies to any other nested field (`embedding.*`,
+`externalIds`) and check the actual response rather than the docs.
+
 ## Batch semantics worth remembering
 
 - `POST /paper/batch` returns a list **positionally aligned with the ids sent**,

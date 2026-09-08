@@ -26,7 +26,7 @@ from alembic import command
 from alembic.config import Config
 
 from app.clients.cache import ResponseCache
-from app.clients.s2 import S2Client
+from app.clients.s2 import S2Client, S2TransientError
 from app.config import REPO_ROOT, settings
 from app.db import make_engine
 
@@ -102,18 +102,31 @@ async def build() -> int:
     missing: list[str] = []
     try:
         for title, why in FIXTURES:
-            stubs = await client.search_title(title)
+            # One title that S2 rate-limits must not discard the twenty already
+            # fetched. A partial fixture is reported and re-runnable -- the
+            # rows already written are cache hits on the next attempt, so a
+            # retry costs only the titles that actually failed.
+            try:
+                stubs = await client.search_title(title)
+            except S2TransientError as exc:
+                print(f"  FAIL  {title[:58]:58} {exc}")
+                missing.append(title)
+                continue
             if not stubs:
                 print(f"  MISS  {title}\n        ({why})")
                 missing.append(title)
                 continue
             top = stubs[0]
-            await client.get_papers([top.s2_paper_id])
-            if title in WITH_REFERENCES:
-                refs = await client.get_references(top.s2_paper_id)
-                print(f"  ok    {title[:58]:58} +{len(refs)} refs")
-            else:
-                print(f"  ok    {title[:58]:58} {top.year}")
+            try:
+                await client.get_papers([top.s2_paper_id])
+                if title in WITH_REFERENCES:
+                    refs = await client.get_references(top.s2_paper_id)
+                    print(f"  ok    {title[:58]:58} +{len(refs)} refs")
+                else:
+                    print(f"  ok    {title[:58]:58} {top.year}")
+            except S2TransientError as exc:
+                print(f"  FAIL  {title[:58]:58} {exc}")
+                missing.append(title)
     finally:
         await client.aclose()
         engine.dispose()
