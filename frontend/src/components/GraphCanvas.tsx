@@ -328,17 +328,32 @@ export function GraphCanvas({
     // permanently live simulation means nodes drift under the cursor when you
     // are trying to click one, and burns a frame budget continuously for a
     // graph that is not moving.
-    // `dragstart`, NOT `grab`. Cytoscape fires `grab` on mousedown, so every
-    // CLICK was starting the physics simulation -- which is why nodes appeared
-    // to swim away when you selected one. `dragstart` fires only once the
-    // pointer actually moves.
-    instance.on("dragstart", "node", (event) => {
-      const node = event.target as cytoscape.NodeSingular;
+    // Two events, two different jobs, and conflating them broke drag twice in
+    // opposite directions.
+    //
+    // `grab` fires on MOUSEDOWN. That is too early to start physics -- doing so
+    // made a plain click shove the neighbourhood around. But it is exactly the
+    // right moment to freeze the idle float: between mousedown and the first
+    // pointer movement the float was still rewriting every node's position each
+    // frame, so the node slid out from under the cursor and Cytoscape never
+    // latched onto it. That is why dragging only worked after a click -- a
+    // click sets a selection, and a selection already stopped the float.
+    instance.on("grab", "node", () => {
       draggingRef.current = true;
+    });
+
+    // The FIRST `drag`, not `dragstart` -- Cytoscape has no `dragstart` for
+    // nodes. Instrumenting a real drag showed the whole sequence to be
+    // `grab -> tapstart -> drag -> drag -> tapend -> free`, so the handler I
+    // had was simply never called: the physics never started and no dragged
+    // node was ever recorded as arranged. `drag` repeats for every pointer
+    // move, hence the guard.
+    instance.on("drag", "node", (event) => {
+      if (liveRef.current) return;
+      const node = event.target as cytoscape.NodeSingular;
       // The dragged node is the anchor -- it follows the pointer, and the
       // simulation solves around it.
       node.lock();
-      liveRef.current?.stop();
       liveRef.current = instance.layout({
         name: "cola",
         infinite: true,
@@ -356,9 +371,13 @@ export function GraphCanvas({
       const node = event.target as cytoscape.NodeSingular;
       node.unlock();
       draggingRef.current = false;
-      // The drag moved things, so the float has to re-base or every node
-      // snaps back to where the layout last put it.
+      // The node may have moved, so the float re-reads its rest positions --
+      // otherwise every node snaps back to wherever the layout last put them.
       rebaseRef.current = true;
+      // `free` also fires for a plain click, where no simulation was started
+      // and nothing moved. Bailing here keeps a click from being recorded as
+      // a deliberate arrangement, which would exempt the node from every
+      // future layout.
       if (!liveRef.current) return;
       // Where the user put it is where it stays: the next batch layout treats
       // it as a fixed constraint rather than a suggestion.
