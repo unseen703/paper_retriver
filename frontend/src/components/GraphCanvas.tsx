@@ -348,28 +348,41 @@ export function GraphCanvas({
     // had was simply never called: the physics never started and no dragged
     // node was ever recorded as arranged. `drag` repeats for every pointer
     // move, hence the guard.
-    instance.on("drag", "node", (event) => {
+    instance.on("drag", "node", () => {
       if (liveRef.current) return;
-      const node = event.target as cytoscape.NodeSingular;
-      // The dragged node is the anchor -- it follows the pointer, and the
-      // simulation solves around it.
-      node.lock();
+      // NOT `node.lock()`. In Cytoscape a locked node cannot be moved by the
+      // user at all, so locking the node being dragged froze the very thing
+      // the pointer was holding -- it appeared stuck. cytoscape-cola already
+      // treats a grabbed node as fixed for the duration of the drag, which is
+      // what the lock was reaching for.
       liveRef.current = instance.layout({
         name: "cola",
         infinite: true,
         fit: false,
-        // Respect what the user has already placed; only unpinned nodes move.
-        handleDisconnected: true,
+        // `false`, emphatically. With it on, cola repacks disconnected
+        // components -- so a single drag tore this graph into three separate
+        // clusters flung across the canvas. The point of the drag physics is
+        // that the neighbourhood follows the node, not that the whole layout
+        // is recomputed.
+        handleDisconnected: false,
+        // Start from where fcose left things and stay there.
+        randomize: false,
+        // Unconstrained, cola drifts the whole graph while it solves. These
+        // keep it local: short simulation steps, no overlap correction pass,
+        // and an edge length matching the batch layout so nothing has a reason
+        // to move except the node being pulled.
+        avoidOverlap: false,
         nodeSpacing: () => 12,
         edgeLength: IDEAL_EDGE_LENGTH,
-        randomize: false,
+        // Damped hard. The default settles aggressively enough to rearrange
+        // clusters; this makes it behave like slack in a net.
+        convergenceThreshold: 0.05,
       } as cytoscape.LayoutOptions);
       liveRef.current.run();
     });
 
     instance.on("free", "node", (event) => {
       const node = event.target as cytoscape.NodeSingular;
-      node.unlock();
       draggingRef.current = false;
       // The node may have moved, so the float re-reads its rest positions --
       // otherwise every node snaps back to wherever the layout last put them.
