@@ -158,6 +158,25 @@ def get_node(conn: Connection, session_id: int, paper_id: int) -> GraphNode | No
     return _row_to_node(row) if row is not None else None
 
 
+def get_nodes_by_state(conn: Connection, session_id: int) -> dict[str, set[int]]:
+    """
+    state -> the paper ids in it, for this session. One query.
+
+    The sweep needs anchors and candidates together and would otherwise ask
+    twice for overlapping data; grouping once also keeps the two answers
+    consistent with each other, which matters when the thing being computed is
+    "which of these is not reachable from those".
+    """
+    rows = conn.execute(
+        text("SELECT state, paper_id FROM graph_nodes WHERE session_id = :session_id"),
+        {"session_id": session_id},
+    )
+    grouped: dict[str, set[int]] = {}
+    for state, paper_id in rows:
+        grouped.setdefault(state, set()).add(paper_id)
+    return grouped
+
+
 def nodes_present(conn: Connection, session_id: int, paper_ids: list[int]) -> set[int]:
     """
     Which of `paper_ids` have a node in this session. Chunked.
@@ -233,6 +252,7 @@ __all__ = [
     "get_node",
     "get_node_ids",
     "get_nodes",
+    "get_nodes_by_state",
     "nodes_present",
     "remove_node",
     "set_position",
