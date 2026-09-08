@@ -175,6 +175,15 @@ class LabelResponse(BaseModel):
     """BUILD.md: 200 returns `{node, rescored_count}`."""
 
     node: NodeResponse
+    swept: list[int] = Field(
+        default_factory=list,
+        description=(
+            "Papers the sweep collected as a consequence of this label change."
+            " Non-empty only when the change cost the graph an anchor. Without"
+            " it the response would describe one node while the client's"
+            " picture of the rest of the graph silently went stale."
+        ),
+    )
     rescored_count: int = Field(
         default=0,
         description=(

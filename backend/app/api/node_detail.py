@@ -170,6 +170,7 @@ def label_node(
             score=result.node.score,
             year=paper.year,
         ),
+        swept=list(result.swept),
         rescored_count=result.rescored_count,
     )
 
@@ -203,7 +204,7 @@ def delete_node(
     if dry_run:
         return RemovalPreview(
             would_remove=[
-                RemovalCandidate(id=pid, title=plan.titles.get(pid, str(pid)))
+                RemovalCandidate(id=pid, title=plan.titles.get(pid, f"(untitled paper {pid})"))
                 for pid in (*plan.removed, *plan.gc_swept)
             ],
             count=plan.count,

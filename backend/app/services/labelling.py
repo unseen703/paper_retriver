@@ -110,11 +110,13 @@ def apply_label(engine: Engine, session_id: int, paper_id: int, target: str) -> 
         # operation knows to collect.
         swept: tuple[int, ...] = ()
         if "SWEEP" in rule.side_effects:
-            # `protect=paper_id`: the node being relabelled is never collected
-            # by the sweep its own relabelling triggered. Un-liking the graph's
-            # only anchor leaves that paper a candidate reachable from nothing,
-            # and sweeping it would silently convert an unlike into a delete.
-            swept = tuple(gc_sweep(conn, session_id, protect=paper_id))
+            # No exemption is passed for the node being relabelled. It does not
+            # need one: the UNLABELED event written above is a USER event, and
+            # the sweep never collects a paper whose latest event the user
+            # authored. That protection is durable, where an argument passed
+            # here would have covered this one sweep and left the paper to be
+            # collected by the next unrelated one.
+            swept = tuple(gc_sweep(conn, session_id))
 
         updated = graph_repo.get_node(conn, session_id, paper_id)
         assert updated is not None  # written one statement ago, in this transaction
