@@ -19,7 +19,7 @@
  */
 import { describe, expect, it } from "vitest";
 import type { GraphNodeOut } from "../api/client";
-import { clampThreshold, navigableNodes } from "./graphInteraction";
+import { clampThreshold, navigableNodes, partitionByQuery } from "./graphInteraction";
 
 function node(id: number, over: Partial<GraphNodeOut> = {}): GraphNodeOut {
   return {
@@ -112,5 +112,44 @@ describe("clampThreshold", () => {
 
   it("survives an empty graph, where there is no range at all", () => {
     expect(clampThreshold(null, { min: 0, max: 0 })).toBe(0);
+  });
+});
+
+describe("partitionByQuery", () => {
+  const nodes = [
+    { id: 1, title: "Attention Is All You Need" },
+    { id: 2, title: "BERT: Pre-training of Deep Bidirectional Transformers" },
+    { id: 3, title: "Deep Residual Learning" },
+    { id: 4, title: null },
+  ];
+
+  it("matches case-insensitively on a substring", () => {
+    expect(partitionByQuery(nodes, "deep").matched).toEqual([2, 3]);
+  });
+
+  it("returns the non-matches too, because dimming them is what finds the match", () => {
+    // BUILD.md R2.11: "dims non-matches". Ringing two nodes green in a field
+    // of two hundred equally bright ones is a puzzle, not a search result.
+    expect(partitionByQuery(nodes, "deep").rest).toEqual([1, 4]);
+  });
+
+  it("matches nothing when the query is empty, so the box being off marks nothing", () => {
+    const { matched, rest } = partitionByQuery(nodes, "");
+    expect(matched).toEqual([]);
+    expect(rest).toEqual([1, 2, 3, 4]);
+  });
+
+  it("treats whitespace as empty", () => {
+    expect(partitionByQuery(nodes, "   ").matched).toEqual([]);
+  });
+
+  it("survives a node with no title rather than throwing", () => {
+    expect(partitionByQuery(nodes, "null").matched).toEqual([]);
+  });
+
+  it("never mutates the graph -- it only reports ids", () => {
+    const before = JSON.stringify(nodes);
+    partitionByQuery(nodes, "deep");
+    expect(JSON.stringify(nodes)).toBe(before);
   });
 });

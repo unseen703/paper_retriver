@@ -24,7 +24,7 @@ import cytoscape from "cytoscape";
 import fcose from "cytoscape-fcose";
 import cola from "cytoscape-cola";
 import type { GraphEdgeOut, GraphNodeOut } from "../api/client";
-import { isVisibleAt, navigableNodes } from "./graphInteraction";
+import { isVisibleAt, matchesQuery, navigableNodes } from "./graphInteraction";
 import {
   type LabelMode,
   stylesheet,
@@ -702,16 +702,19 @@ export function GraphCanvas({
   useEffect(() => {
     const instance = cy.current;
     if (!instance) return;
-    const query = searchQuery.trim().toLowerCase();
-    instance.nodes().removeClass("match");
-    if (!query) {
+    instance.nodes().removeClass("match searchFade");
+    if (searchQuery.trim() === "") {
       onMatchCount?.(0);
       return;
     }
-    const matched = instance
-      .nodes()
-      .filter((node) => String(node.data("title") ?? "").toLowerCase().includes(query));
+    const matched = instance.nodes().filter((node) => matchesQuery(node.data("title"), searchQuery));
     matched.addClass("match");
+    // BUILD.md R2.11 asks for the non-matches to dim, and that is the half
+    // that does the work: ringing four nodes in a field of two hundred equally
+    // bright ones is a puzzle, not a search result. A separate class from
+    // `fade` so a neighbourhood highlight and a search can be active at once
+    // without one clearing the other.
+    instance.nodes().difference(matched).addClass("searchFade");
     onMatchCount?.(matched.length);
   }, [nodes, searchQuery, onMatchCount]);
 

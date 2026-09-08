@@ -209,6 +209,13 @@ export const stylesheet = [
     style: { "border-width": 3, "border-color": "#48bb78", "z-index": 25 },
   },
 
+  // Dimmed because a search is active and this node does not match (R2.11).
+  // Lighter than `fade` (0.1): a search narrows attention within a graph you
+  // are still reading, where a neighbourhood highlight answers "what is
+  // connected to this" and can afford to push everything else right back.
+  { selector: "node.searchFade", style: { opacity: 0.25 } },
+  { selector: "edge.searchFade", style: { opacity: 0.08 } },
+
   // Filtered out by the score threshold. `display: none` rather than opacity:
   // a hidden node must not catch clicks, and the layout should not reserve
   // space for it. Cytoscape hides incident edges automatically.
