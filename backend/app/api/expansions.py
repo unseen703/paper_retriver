@@ -168,7 +168,12 @@ def _result_of(record: dict[str, Any], added: list[int]) -> ExpandResponse | Non
         boundary=record["n_filtered"] or 0,
         api_calls=record["api_calls"] or 0,
         cache_hits=record["cache_hits"] or 0,
-        truncated=bool(record["error"]),
+        # Derived, because no column holds it -- and "does `error` say
+        # anything" is the wrong derivation. `error` also carries "no anchors
+        # in this session", a run that did not stop early because there was
+        # nothing to stop. Truncation means the run left candidates on the
+        # table, which is exactly `n_pool > n_added`.
+        truncated=bool(record["error"]) and (record["n_pool"] or 0) > (record["n_added"] or 0),
         error=record["error"],
     )
 

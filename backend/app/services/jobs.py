@@ -160,7 +160,15 @@ class JobWorker:
                 continue
             if job is None:
                 continue
-            self._execute(job)
+            try:
+                self._execute(job)
+            except Exception:  # noqa: BLE001 - the thread must outlive any one job
+                # `_execute` handles its own failures, but its handler writes
+                # to the database and can fail in turn -- during shutdown, say,
+                # against a disposed engine. Without this the thread ends, and
+                # every job queued afterwards sits QUEUED forever while its
+                # session stays blocked on a 409 for work nothing is doing.
+                logger.exception("job_execution_escaped job_id=%s", job.get("id"))
 
     def _claim(self) -> dict[str, Any] | None:
         with self._engine.begin() as conn:
@@ -197,8 +205,14 @@ class JobWorker:
             # expansion is a success and marking it FAILED would tell the user
             # to retry something that already worked.
             logger.exception("job_failed job_id=%s session=%s", job_id, session_id)
-            with self._engine.begin() as conn:
-                expansions_repo.fail(conn, session_id, job_id, f"{type(exc).__name__}: {exc}")
+            try:
+                with self._engine.begin() as conn:
+                    expansions_repo.fail(conn, session_id, job_id, f"{type(exc).__name__}: {exc}")
+            except Exception:  # noqa: BLE001 - recording a failure must not become one
+                # If even this cannot be written the row stays RUNNING, and the
+                # next startup's sweep marks it interrupted. That is the right
+                # outcome: the job really was interrupted.
+                logger.exception("job_failure_unrecorded job_id=%s", job_id)
             return
 
         logger.info(
