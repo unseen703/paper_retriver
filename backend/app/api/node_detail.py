@@ -36,7 +36,15 @@ from app.api.deps import existing_session, get_engine
 from app.repo import edges as edges_repo
 from app.repo import graph as graph_repo
 from app.repo import papers as papers_repo
-from app.schemas.nodes import NodeDetail
+from app.schemas.nodes import (
+    LabelRequest,
+    LabelResponse,
+    NodeDetail,
+    NodeResponse,
+    TransitionRefusedDetail,
+)
+from app.services.labelling import NodeNotInSession, apply_label
+from app.services.transitions import TransitionError
 
 router = APIRouter(prefix="/api/sessions", tags=["nodes"])
 
@@ -103,6 +111,69 @@ def get_node_detail(
         features=node.features,
         score_breakdown=node.score_breakdown,
     )
+
+
+@router.patch(
+    "/{sid}/nodes/{paper_id}",
+    response_model=LabelResponse,
+    responses={409: {"model": TransitionRefusedDetail}},
+)
+def label_node(
+    sid: Annotated[int, Depends(existing_session)],
+    paper_id: Annotated[int, Path(ge=1, description="Local paper id.")],
+    body: LabelRequest,
+    engine: Annotated[Engine, Depends(get_engine)],
+) -> LabelResponse:
+    """
+    Change one paper's label (R2.2).
+
+    One endpoint rather than `/like` + `/dislike` + `/unlike`: PLAN.md wants
+    "one state machine, one validation path, one audit write", and three
+    endpoints would be three places to forget the event that
+    `scripts/rebuild_state.py` rebuilds from.
+
+    The two refusals mean different things. A paper with no node here is a 404
+    -- boundary papers are in the corpus by design and have no state to change.
+    A transition the machine forbids is a 409 carrying its `error_code`,
+    because "you cannot do that" is not actionable while `SEED_NOT_LABELABLE`
+    names a rule the UI can explain.
+    """
+    try:
+        result = apply_label(engine, sid, paper_id, body.state)
+    except NodeNotInSession as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except TransitionError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "detail": str(exc),
+                "error_code": exc.error_code,
+                "from_state": _current_state(engine, sid, paper_id),
+                "to_state": body.state,
+            },
+        ) from exc
+
+    with engine.connect() as conn:
+        (paper,) = papers_repo.get_papers_by_ids(conn, [paper_id])
+    return LabelResponse(
+        node=NodeResponse(
+            session_id=result.node.session_id,
+            paper_id=result.node.paper_id,
+            state=result.node.state,
+            depth=result.node.depth,
+            title=paper.title,
+            score=result.node.score,
+            year=paper.year,
+        ),
+        rescored_count=result.rescored_count,
+    )
+
+
+def _current_state(engine: Engine, sid: int, paper_id: int) -> str:
+    """The state the refused transition started from, for the error body."""
+    with engine.connect() as conn:
+        node = graph_repo.get_node(conn, sid, paper_id)
+    return node.state if node else "UNKNOWN"
 
 
 __all__ = ["router"]

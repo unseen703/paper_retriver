@@ -9,7 +9,7 @@ was asked, and the only place that surfaces is production.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -140,10 +140,58 @@ class NodeDetail(BaseModel):
     )
 
 
+class LabelRequest(BaseModel):
+    """
+    Change one paper's label (R2.2).
+
+    One endpoint, not `/like` + `/dislike` + `/unlike`. PLAN.md: "One state
+    machine, one validation path, one audit write." Three endpoints means three
+    places to forget the event, and the event log is what
+    `scripts/rebuild_state.py` reconstructs the graph from.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    state: Literal["CANDIDATE", "LIKED", "DISLIKED", "SEED"] = Field(
+        description=(
+            "Target state. SEED is accepted by the schema and refused by the"
+            " state machine with CANNOT_PROMOTE_TO_SEED -- a 409 that names the"
+            " rule is more useful than a 422 that says the value is not in an"
+            " enum, because the caller's mistake is about meaning, not typing."
+        )
+    )
+
+
+class TransitionRefusedDetail(BaseModel):
+    """Why the state machine refused, in the shape the UI branches on."""
+
+    detail: str
+    error_code: str
+    from_state: str
+    to_state: str
+
+
+class LabelResponse(BaseModel):
+    """BUILD.md: 200 returns `{node, rescored_count}`."""
+
+    node: NodeResponse
+    rescored_count: int = Field(
+        default=0,
+        description=(
+            "Nodes whose score changed as a result. Always 0 until R3 ships"
+            " ranking -- reported now so the contract does not change shape"
+            " when it starts being non-zero."
+        ),
+    )
+
+
 __all__ = [
     "AddNodeRequest",
+    "LabelRequest",
+    "LabelResponse",
     "NodeDetail",
     "NodeResponse",
     "RejectedResponse",
     "RejectionDetail",
+    "TransitionRefusedDetail",
 ]
