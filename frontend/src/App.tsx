@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { API_BASE, api } from "./api/client";
 import { useView } from "./store/view";
@@ -6,7 +6,9 @@ import { GraphCanvas } from "./components/GraphCanvas";
 import { FIXTURE_EDGES, FIXTURE_NODES } from "./components/fixture";
 import { AddPaperDialog } from "./components/AddPaperDialog";
 import { ExpansionControls } from "./components/ExpansionControls";
-import { NodeInspector } from "./components/NodeInspector";
+import { NodeInspector, type Neighbour } from "./components/NodeInspector";
+import { ViewControls } from "./components/ViewControls";
+import type { LabelMode } from "./components/stylesheet";
 
 /**
  * The shell around the canvas: a legend, a couple of view controls, and a
@@ -31,6 +33,20 @@ export default function App() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [hoveredId, setHoveredId] = useState<number | null>(null);
   const [relayoutToken, setRelayoutToken] = useState(0);
+  const [resetViewToken, setResetViewToken] = useState(0);
+  const [labelMode, setLabelMode] = useState<LabelMode>("relevant");
+  const [scoreThreshold, setScoreThreshold] = useState<number | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [visibleCount, setVisibleCount] = useState({ visible: 0, total: 0 });
+  const [matchCount, setMatchCount] = useState(0);
+
+  // Stable identities: the canvas calls these from effects, so a new function
+  // each render would re-run the score filter and the search on every render.
+  const handleVisible = useCallback(
+    (visible: number, total: number) => setVisibleCount({ visible, total }),
+    [],
+  );
+  const handleMatches = useCallback((matches: number) => setMatchCount(matches), []);
 
   const health = useQuery({ queryKey: ["health"], queryFn: api.health });
   const graph = useQuery({
@@ -49,12 +65,48 @@ export default function App() {
     [nodes, hoveredId, selectedId],
   );
 
+  // Built from the edges already on screen rather than fetched: the graph
+  // response carries every edge between drawn nodes, so a request would ask
+  // the server for something the client already has.
+  // The candidates' actual score span. Seeds are excluded: they have no score,
+  // and including their absent one as a zero would stretch the slider back
+  // over the empty range the bounding is meant to remove.
+  const scoreRange = useMemo(() => {
+    const scores = nodes
+      .filter((n) => n.state === "CANDIDATE" && typeof n.score === "number")
+      .map((n) => n.score as number);
+    if (scores.length === 0) return { min: 0, max: 0 };
+    return { min: Math.min(...scores), max: Math.max(...scores) };
+  }, [nodes]);
+
+  // Null until the data arrives, then pinned to the bottom of the range: a
+  // slider that starts mid-range would hide papers before the user touched it.
+  const effectiveThreshold = scoreThreshold ?? scoreRange.min;
+
+  const neighbours = useMemo<Neighbour[]>(() => {
+    if (selectedId == null) return [];
+    const titles = new Map(nodes.map((n) => [n.id, n.title]));
+    const out: Neighbour[] = [];
+    for (const edge of edges) {
+      if (edge.source === selectedId && titles.has(edge.target)) {
+        out.push({ id: edge.target, title: titles.get(edge.target)!, direction: "cites" });
+      } else if (edge.target === selectedId && titles.has(edge.source)) {
+        out.push({ id: edge.source, title: titles.get(edge.source)!, direction: "cited by" });
+      }
+    }
+    // Stable order, and outgoing first: a paper's own bibliography is the more
+    // deliberate list, its citations the more arbitrary one.
+    return out.sort(
+      (a, b) => a.direction.localeCompare(b.direction) || a.title.localeCompare(b.title),
+    );
+  }, [selectedId, nodes, edges]);
+
   return (
     <div
       style={{
         height: "100%",
         display: "grid",
-        gridTemplateRows: "auto 1fr auto",
+        gridTemplateRows: showFixture ? "auto 1fr auto" : "auto auto 1fr auto",
         // `minmax(0, 1fr)`, not the implicit `auto`. A grid column sized by
         // content lets its children push past the viewport, so opening the
         // inspector rendered it at x=1280 -- entirely off the right edge --
@@ -101,6 +153,22 @@ export default function App() {
         </span>
       </header>
 
+      {!showFixture && (
+        <ViewControls
+          labelMode={labelMode}
+          onLabelMode={setLabelMode}
+          scoreThreshold={effectiveThreshold}
+          onScoreThreshold={setScoreThreshold}
+          scoreRange={scoreRange}
+          searchQuery={searchQuery}
+          onSearchQuery={setSearchQuery}
+          onResetView={() => setResetViewToken((t) => t + 1)}
+          visible={visibleCount.visible}
+          total={visibleCount.total}
+          matches={matchCount}
+        />
+      )}
+
       <main style={{ display: "flex", minHeight: 0, minWidth: 0 }}>
         <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
         {!showFixture && graph.isPending && <Overlay>Loading the graph…</Overlay>}
@@ -124,6 +192,12 @@ export default function App() {
           onSelect={setSelected}
           onHover={setHoveredId}
           relayoutToken={relayoutToken}
+          resetViewToken={resetViewToken}
+          labelMode={labelMode}
+          scoreThreshold={effectiveThreshold}
+          searchQuery={searchQuery}
+          onVisibleCount={handleVisible}
+          onMatchCount={handleMatches}
         />
 
           <p style={hintStyle}>drag to move · scroll to zoom · hover to trace · click to inspect</p>
@@ -136,6 +210,8 @@ export default function App() {
           <NodeInspector
             sessionId={sessionId}
             paperId={selectedId}
+            neighbours={neighbours}
+            onSelect={setSelected}
             onClose={() => setSelected(null)}
           />
         )}

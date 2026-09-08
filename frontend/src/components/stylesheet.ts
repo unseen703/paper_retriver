@@ -199,6 +199,20 @@ export const stylesheet = [
   },
   // Cytoscape's own grab cue, so a draggable node looks draggable.
   { selector: "node:active", style: { "overlay-opacity": 0.12, "overlay-color": HIGHLIGHT } },
+
+  // A title-search match. Green rather than the yellow highlight, because a
+  // search result and a neighbourhood are different questions and the user can
+  // be asking both at once -- a match inside the selected node's neighbourhood
+  // has to be legible as both.
+  {
+    selector: "node.match",
+    style: { "border-width": 3, "border-color": "#48bb78", "z-index": 25 },
+  },
+
+  // Filtered out by the score threshold. `display: none` rather than opacity:
+  // a hidden node must not catch clicks, and the layout should not reserve
+  // space for it. Cytoscape hides incident edges automatically.
+  { selector: ".hidden", style: { display: "none" } },
 ] as unknown as cytoscape.StylesheetJson;
 
 /** The prototype's radius curve, verbatim. Doubled because Cytoscape sizes by diameter. */
@@ -247,26 +261,37 @@ export function toElementData(node: GraphNodeOut, years: YearRange) {
   };
 }
 
+/** The prototype's three label modes, verbatim: hidden | all | relevant. */
+export type LabelMode = "hidden" | "all" | "relevant";
+
+// `LABEL_SCORE_THRESHOLD` in the prototype. A candidate scoring above this is
+// interesting enough to name without being asked.
+const RELEVANT_SCORE = 0.35;
+
 /**
  * Decide which nodes carry a visible label.
  *
- * Seeds always, plus the most-cited handful. Everything else reveals its title
- * on hover, which is the prototype's "relevant only" default and the reason
- * its canvas stayed readable at this density.
+ * The prototype's `_labelVisible`, ported: "always show labeled
+ * (seed/liked/disliked/skipped) nodes, plus unlabeled candidates above the
+ * relevance-score threshold."
+ *
+ * "relevant" is the default because thirty-seven titles at once is unreadable
+ * and text measurement is the expensive part of a Cytoscape frame -- but
+ * "all" exists for when you are actually reading the graph rather than
+ * navigating it, and "hidden" for when you are looking at its shape.
  */
-export function withLabelFlags(nodes: GraphNodeOut[], topN = 8): Map<number, string | undefined> {
-  const ranked = [...nodes]
-    .filter((n) => n.state !== "SEED")
-    // Stable: citations first, then id, so the labelled set does not flicker
-    // between renders when two papers tie.
-    .sort((a, b) => (b.citation_count ?? 0) - (a.citation_count ?? 0) || a.id - b.id)
-    .slice(0, topN)
-    .map((n) => n.id);
-  const labelled = new Set<number>([
-    ...ranked,
-    ...nodes.filter((n) => n.state === "SEED").map((n) => n.id),
-  ]);
-  return new Map(nodes.map((n) => [n.id, labelled.has(n.id) ? shorten(n.title) : undefined]));
+export function withLabelFlags(
+  nodes: GraphNodeOut[],
+  mode: LabelMode = "relevant",
+): Map<number, string | undefined> {
+  return new Map(
+    nodes.map((n) => {
+      const show =
+        mode === "all" ||
+        (mode !== "hidden" && (n.state !== "CANDIDATE" || (n.score ?? 0) >= RELEVANT_SCORE));
+      return [n.id, show ? shorten(n.title) : undefined];
+    }),
+  );
 }
 
 /**

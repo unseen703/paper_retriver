@@ -24,7 +24,13 @@ import cytoscape from "cytoscape";
 import fcose from "cytoscape-fcose";
 import cola from "cytoscape-cola";
 import type { GraphEdgeOut, GraphNodeOut } from "../api/client";
-import { stylesheet, toElementData, withLabelFlags, yearRange } from "./stylesheet";
+import {
+  type LabelMode,
+  stylesheet,
+  toElementData,
+  withLabelFlags,
+  yearRange,
+} from "./stylesheet";
 
 cytoscape.use(fcose);
 // A SECOND layout engine, deliberately, and a documented departure from
@@ -105,6 +111,18 @@ export interface GraphCanvasProps {
   onHover?: (paperId: number | null) => void;
   /** Bumping this re-runs the layout, for a "tidy up" control. */
   relayoutToken?: number;
+  /** Bumping this returns the viewport to a fitted view. */
+  resetViewToken?: number;
+  /** hidden | all | relevant, the prototype's three modes. */
+  labelMode?: LabelMode;
+  /** Hide unlabelled candidates scoring below this. */
+  scoreThreshold?: number;
+  /** Title substring to highlight; empty clears. */
+  searchQuery?: string;
+  /** Reports how many nodes survive the score filter, for the readout. */
+  onVisibleCount?: (visible: number, total: number) => void;
+  /** Reports how many nodes match the search. */
+  onMatchCount?: (matches: number) => void;
 }
 
 export function GraphCanvas({
@@ -114,6 +132,12 @@ export function GraphCanvas({
   onSelect,
   onHover,
   relayoutToken = 0,
+  resetViewToken = 0,
+  labelMode = "relevant",
+  scoreThreshold = 0,
+  searchQuery = "",
+  onVisibleCount,
+  onMatchCount,
 }: GraphCanvasProps) {
   const container = useRef<HTMLDivElement>(null);
   const cy = useRef<cytoscape.Core | null>(null);
@@ -136,7 +160,18 @@ export function GraphCanvas({
   // the guard stopped working after the first Tidy click, so every subsequent
   // refetch rearranged a graph the user had arranged by hand.
   const lastTokenRef = useRef(0);
+  // The clicked node whose neighbourhood is pinned, or null. Hover is
+  // suppressed while this is set.
+  const pinnedRef = useRef<number | null>(null);
   const selectedIdRef = useRef(selectedId);
+  // An external deselection -- Escape, the inspector's close button -- has to
+  // release the pin too, or hover stays dead with nothing lit to explain why.
+  useEffect(() => {
+    if (selectedId === null && pinnedRef.current !== null) {
+      pinnedRef.current = null;
+      cy.current?.elements().removeClass("hl fade hover");
+    }
+  }, [selectedId]);
   onSelectRef.current = onSelect;
   onHoverRef.current = onHover;
   selectedIdRef.current = selectedId;
@@ -163,6 +198,11 @@ export function GraphCanvas({
     };
 
     instance.on("mouseover", "node", (event) => {
+      // A pinned neighbourhood outranks the pointer. The prototype's highlight
+      // came from clicking, so it survived moving the mouse away to read the
+      // detail panel; a hover that overwrote it would undo the thing the click
+      // was for.
+      if (pinnedRef.current !== null) return;
       const node = event.target as cytoscape.NodeSingular;
       const near = node.closedNeighborhood();
       instance.elements().addClass("fade");
@@ -179,6 +219,7 @@ export function GraphCanvas({
     });
 
     instance.on("mouseout", "node", (event) => {
+      if (pinnedRef.current !== null) return;
       const node = event.target as cytoscape.NodeSingular;
       clearHighlight();
       // Back to whatever `withLabelFlags` decided; removeStyle drops the
@@ -188,12 +229,32 @@ export function GraphCanvas({
       if (container.current) container.current.style.cursor = "default";
     });
 
-    // --- click: select, background click clears ---------------------------
+    // --- click: select and PIN the neighbourhood --------------------------
+    //
+    // The prototype's `highlightNeighborhood` toggles: clicking the already
+    // highlighted node clears it. That matters because the highlight is how
+    // you read a paper's connections, and you need to be able to put it away
+    // without hunting for empty canvas.
     instance.on("tap", "node", (event) => {
-      onSelectRef.current?.(Number(event.target.id()));
+      const node = event.target as cytoscape.NodeSingular;
+      const id = Number(node.id());
+      if (pinnedRef.current === id) {
+        pinnedRef.current = null;
+        clearHighlight();
+        onSelectRef.current?.(null);
+        return;
+      }
+      pinnedRef.current = id;
+      clearHighlight();
+      instance.elements().addClass("fade");
+      node.closedNeighborhood().removeClass("fade").addClass("hl");
+      node.addClass("hover");
+      onSelectRef.current?.(id);
     });
+
     instance.on("tap", (event) => {
       if (event.target === instance) {
+        pinnedRef.current = null;
         onSelectRef.current?.(null);
         clearHighlight();
       }
@@ -312,7 +373,7 @@ export function GraphCanvas({
     layoutRef.current?.stop();
     const wanted = new Set(nodes.map((n) => String(n.id)));
     const scatter = seedScatter(nodes.map((n) => n.id));
-    const labels = withLabelFlags(nodes);
+    const labels = withLabelFlags(nodes, labelMode);
     const years = yearRange(nodes);
     let added = 0;
 
@@ -397,7 +458,59 @@ export function GraphCanvas({
     // has learned instead of rearranging it (PLAN.md M6).
     const freshGraph = added === instance.nodes().length;
     layoutRef.current = runLayout(instance, freshGraph ? scatter : null);
-  }, [nodes, edges, relayoutToken]);
+  }, [nodes, edges, relayoutToken, labelMode]);
+
+  // --- score threshold -----------------------------------------------------
+  // The prototype's `applyScoreFilter`: hide unlabelled candidates below the
+  // slider, keep everything the user has labelled regardless. A seed you added
+  // by hand should never vanish because its score is low -- it has no score,
+  // and hiding it would look like the tool losing your work.
+  useEffect(() => {
+    const instance = cy.current;
+    if (!instance) return;
+    let visible = 0;
+    instance.batch(() => {
+      instance.nodes().forEach((node) => {
+        const isCandidate = node.data("state") === "CANDIDATE";
+        const show = !isCandidate || (node.data("score") ?? 0) >= scoreThreshold;
+        node.toggleClass("hidden", !show);
+        if (show) visible += 1;
+      });
+    });
+    onVisibleCount?.(visible, instance.nodes().length);
+  }, [nodes, scoreThreshold, onVisibleCount]);
+
+  // --- title search --------------------------------------------------------
+  // Client-side, unlike the prototype, which round-tripped to
+  // `/api/paper/search`. The whole graph is already in memory, so a request
+  // would add latency and load to answer a question the browser can answer
+  // instantly -- and it would filter the corpus rather than the graph, which
+  // is a different question from the one the box appears to ask.
+  useEffect(() => {
+    const instance = cy.current;
+    if (!instance) return;
+    const query = searchQuery.trim().toLowerCase();
+    instance.nodes().removeClass("match");
+    if (!query) {
+      onMatchCount?.(0);
+      return;
+    }
+    const matched = instance
+      .nodes()
+      .filter((node) => String(node.data("title") ?? "").toLowerCase().includes(query));
+    matched.addClass("match");
+    onMatchCount?.(matched.length);
+  }, [nodes, searchQuery, onMatchCount]);
+
+  // --- reset zoom ----------------------------------------------------------
+  useEffect(() => {
+    const instance = cy.current;
+    if (!instance || resetViewToken === 0 || instance.nodes().empty()) return;
+    // Animated, like the prototype's 500ms transition to zoomIdentity: a
+    // viewport that teleports leaves you re-finding where you were.
+    instance.animate({ fit: { eles: instance.elements(), padding: 40 } }, { duration: 400 });
+    userAdjusted.current = false;
+  }, [resetViewToken]);
 
   // Keyboard access. Cytoscape draws into a canvas, so there is no DOM for a
   // screen reader and no focusable target for a keyboard -- without this the

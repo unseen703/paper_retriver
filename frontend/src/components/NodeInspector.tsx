@@ -23,13 +23,29 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
 
+export interface Neighbour {
+  id: number;
+  title: string;
+  /** BACKWARD means this paper cites the neighbour. */
+  direction: "cites" | "cited by";
+}
+
 export interface NodeInspectorProps {
   sessionId: number;
   paperId: number | null;
+  /** The selected paper's neighbours in the drawn graph, for the jump list. */
+  neighbours?: Neighbour[];
+  onSelect?: (paperId: number) => void;
   onClose: () => void;
 }
 
-export function NodeInspector({ sessionId, paperId, onClose }: NodeInspectorProps) {
+export function NodeInspector({
+  sessionId,
+  paperId,
+  neighbours = [],
+  onSelect,
+  onClose,
+}: NodeInspectorProps) {
   const detail = useQuery({
     queryKey: ["node", sessionId, paperId],
     queryFn: () => api.node(sessionId, paperId as number),
@@ -124,6 +140,29 @@ export function NodeInspector({ sessionId, paperId, onClose }: NodeInspectorProp
             </a>
           </div>
 
+          {/* The prototype's neighbour sidebar. Reading a citation graph is
+              mostly walking edges, and hunting for a specific small circle on
+              a canvas is a bad way to do it -- a list you can click is the
+              difference between exploring and squinting. Direction is shown
+              because "cites" and "cited by" are different claims. */}
+          {neighbours.length > 0 && (
+            <>
+              <h3 style={sectionHeading}>
+                Connected papers <span style={{ color: "var(--dim)" }}>({neighbours.length})</span>
+              </h3>
+              <ul style={neighbourList}>
+                {neighbours.map((n) => (
+                  <li key={n.id}>
+                    <button style={neighbourRow} onClick={() => onSelect?.(n.id)}>
+                      <span style={directionTag(n.direction)}>{n.direction}</span>
+                      <span style={{ color: "var(--muted)" }}>{n.title}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+
           <p style={{ ...dim, marginTop: 14, fontSize: 11 }}>
             {Object.keys(paper.score_breakdown ?? {}).length === 0
               ? "Score breakdown arrives at R3, with the real feature set."
@@ -174,3 +213,41 @@ const grid: React.CSSProperties = {
 };
 
 const link: React.CSSProperties = { color: "var(--accent)", fontSize: 12 };
+
+const sectionHeading: React.CSSProperties = {
+  fontSize: 11,
+  textTransform: "uppercase",
+  letterSpacing: "0.08em",
+  color: "var(--dim)",
+  margin: "18px 0 6px",
+};
+
+const neighbourList: React.CSSProperties = { listStyle: "none", margin: 0, padding: 0 };
+
+const neighbourRow: React.CSSProperties = {
+  display: "flex",
+  gap: 6,
+  alignItems: "baseline",
+  width: "100%",
+  textAlign: "left",
+  background: "transparent",
+  border: "1px solid transparent",
+  borderRadius: 4,
+  padding: "4px 6px",
+  fontSize: 12,
+  cursor: "pointer",
+};
+
+function directionTag(direction: "cites" | "cited by"): React.CSSProperties {
+  return {
+    flexShrink: 0,
+    fontSize: 10,
+    fontWeight: 600,
+    borderRadius: 8,
+    padding: "0 6px",
+    // Outgoing is the paper's own bibliography, incoming is its reception --
+    // different colours because they answer different questions.
+    background: direction === "cites" ? "#2b6cb0" : "#276749",
+    color: direction === "cites" ? "#bee3f8" : "#9ae6b4",
+  };
+}
