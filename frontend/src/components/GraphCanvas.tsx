@@ -53,6 +53,15 @@ cytoscape.use(cola);
 // idealEdgeLength -- it's fine for 100 nodes".
 const IDEAL_EDGE_LENGTH = 95;
 
+// How far a node wanders from its rest position while idling, in graph units.
+// Small on purpose: enough that the graph is visibly alive, not so much that
+// edges visibly stretch or a node you are aiming at moves out from under the
+// cursor.
+const FLOAT_RADIUS = 3.5;
+
+// How long the batch layout animates into place.
+const LAYOUT_ANIMATION_MS = 600;
+
 /**
  * Deterministic starting positions for nodes that have none.
  *
@@ -163,6 +172,42 @@ export function GraphCanvas({
   // The clicked node whose neighbourhood is pinned, or null. Hover is
   // suppressed while this is set.
   const pinnedRef = useRef<number | null>(null);
+  const draggingRef = useRef(false);
+  // Set whenever something has moved nodes for real -- a drag, a layout -- so
+  // the float re-reads its rest positions instead of yanking them back.
+  const rebaseRef = useRef(true);
+  // Whether the graph has been framed once. After that, framing is the user's
+  // business.
+  const hasFittedRef = useRef(false);
+  // True while a batch layout is still moving nodes. The float must hold off
+  // until then: it captures rest positions once and pushes nodes back onto
+  // them every frame, so starting mid-animation froze the layout half-settled
+  // and fought fcose for control of every node.
+  const layoutRunningRef = useRef(false);
+
+  /**
+   * Frame the graph, once, and only if it can actually be framed.
+   *
+   * `fit()` computes a zoom from the viewport, so calling it against a
+   * container that has not resolved its height yet is a silent no-op -- it
+   * returns without changing anything and without complaining. The bug that
+   * caused was subtle: the layout's `ready` fires before the CSS grid has
+   * sized anything, so the fit did nothing, the "already framed" flag was set
+   * anyway, and the ResizeObserver -- which fires later, with a real viewport
+   * -- then declined to fit because the flag said the job was done. The graph
+   * sat at zoom 1 with a 1826x1686 layout in a 1280x572 window.
+   *
+   * So the flag is set by a fit that WORKED, never by one that was attempted.
+   */
+  const fitOnce = useRef((instance: cytoscape.Core, force = false) => {
+    if (hasFittedRef.current && !force) return;
+    const box = instance.container();
+    if (!box || box.clientHeight < 1 || box.clientWidth < 1) return;
+    if (instance.nodes().empty()) return;
+    instance.resize();
+    instance.fit(undefined, 40);
+    hasFittedRef.current = true;
+  });
   const selectedIdRef = useRef(selectedId);
   // An external deselection -- Escape, the inspector's close button -- has to
   // release the pin too, or hover stays dead with nothing lit to explain why.
@@ -180,14 +225,25 @@ export function GraphCanvas({
   useEffect(() => {
     if (!container.current) return;
 
+    // Per-instance, not per-component. Refs survive React StrictMode's
+    // mount/unmount/mount, so the first mount's layout claimed the one-time
+    // fit, the instance it fitted was then destroyed, and the second mount's
+    // layout found the flag already true and declined -- leaving the graph
+    // unframed at zoom 1. A fresh Cytoscape instance has never been framed,
+    // whatever a leftover ref says.
+    hasFittedRef.current = false;
+
     const instance = cytoscape({
       container: container.current,
       style: stylesheet,
       // Box selection fights click-to-inspect, and nothing yet acts on a
       // multi-selection.
       boxSelectionEnabled: false,
-      // Cytoscape's default is aggressive enough to overshoot on a trackpad.
-      wheelSensitivity: 0.2,
+      // Cytoscape's default (1). It was 0.2, which I lowered to stop a
+      // trackpad overshooting -- and which turned every zoom into a long
+      // scroll. Overshooting is recoverable in one flick; needing ten flicks
+      // to read a small node is not.
+      wheelSensitivity: 1,
       minZoom: 0.05,
       maxZoom: 8,
     });
@@ -272,9 +328,14 @@ export function GraphCanvas({
     // permanently live simulation means nodes drift under the cursor when you
     // are trying to click one, and burns a frame budget continuously for a
     // graph that is not moving.
-    instance.on("grab", "node", (event) => {
+    // `dragstart`, NOT `grab`. Cytoscape fires `grab` on mousedown, so every
+    // CLICK was starting the physics simulation -- which is why nodes appeared
+    // to swim away when you selected one. `dragstart` fires only once the
+    // pointer actually moves.
+    instance.on("dragstart", "node", (event) => {
       const node = event.target as cytoscape.NodeSingular;
-      // The grabbed node is the anchor -- it follows the pointer, and the
+      draggingRef.current = true;
+      // The dragged node is the anchor -- it follows the pointer, and the
       // simulation solves around it.
       node.lock();
       liveRef.current?.stop();
@@ -294,6 +355,11 @@ export function GraphCanvas({
     instance.on("free", "node", (event) => {
       const node = event.target as cytoscape.NodeSingular;
       node.unlock();
+      draggingRef.current = false;
+      // The drag moved things, so the float has to re-base or every node
+      // snaps back to where the layout last put it.
+      rebaseRef.current = true;
+      if (!liveRef.current) return;
       // Where the user put it is where it stays: the next batch layout treats
       // it as a fixed constraint rather than a suggestion.
       node.data("pinned", true);
@@ -302,6 +368,7 @@ export function GraphCanvas({
       window.setTimeout(() => {
         liveRef.current?.stop();
         liveRef.current = null;
+        rebaseRef.current = true;
       }, 400);
     });
 
@@ -335,9 +402,19 @@ export function GraphCanvas({
       if (size === lastSize) return;
       lastSize = size;
       instance.resize();
-      if (!userAdjusted.current && instance.nodes().nonempty()) {
-        instance.fit(undefined, 40);
-      }
+      // Keep the graph framed until the first layout has settled, but do NOT
+      // claim the one-time fit -- only the layout's `ready` may set that flag.
+      //
+      // Claiming it here was a bug: the observer fires while the opening
+      // layout is still animating, so it fitted against the seed-scatter
+      // bounding box, marked the graph as framed, and the real layout -- which
+      // ends up far larger -- then declined to re-fit. The result was a
+      // 1826x1686 graph sitting at zoom 1 in a 1280x572 viewport with most of
+      // itself off-screen.
+      //
+      // After that first framing, `resize()` alone is the right behaviour: it
+      // updates the viewport and keeps the zoom and pan someone has chosen.
+      fitOnce.current(instance);
     });
     observer.observe(container.current);
 
@@ -440,15 +517,15 @@ export function GraphCanvas({
     // has learned.
     if (added === 0 && !tidyRequested) return;
 
-    // Re-frame when the view would otherwise hide the result.
+    // Re-framing is now something the USER asks for, not something that
+    // happens to them.
     //
-    // Tidy is an explicit request to rearrange, which includes re-framing. So
-    // is an expansion: new nodes are placed wherever the layout puts them, and
-    // after any zoom `userAdjusted` suppressed the auto-fit -- so 20 new
-    // papers could land outside the viewport while the header count climbed
-    // from 37 to 57 and the canvas appeared not to change. That reads as the
-    // expansion having failed.
-    if (tidyRequested || added > 0) userAdjusted.current = false;
+    // The previous rule re-fitted whenever nodes arrived, so that an expansion
+    // could not land papers off-screen. It solved that and created something
+    // worse: the view zoomed out from under you every time anything changed,
+    // which is disorienting in a way that a missed node is not. Tidy and Reset
+    // zoom both re-frame on request, and either is one click away.
+    if (tidyRequested) userAdjusted.current = false;
     // A fresh graph -- every node new -- is laid out from the deterministic
     // scatter rather than from whatever happens to be on screen. That makes
     // the first layout idempotent, which it has to be: StrictMode runs this
@@ -457,8 +534,97 @@ export function GraphCanvas({
     // Growth is left alone, so an expansion still extends the picture the user
     // has learned instead of rearranging it (PLAN.md M6).
     const freshGraph = added === instance.nodes().length;
-    layoutRef.current = runLayout(instance, freshGraph ? scatter : null);
+    rebaseRef.current = true;
+    layoutRunningRef.current = true;
+    layoutRef.current = runLayout(instance, freshGraph ? scatter : null, () => {
+      // `force` on Tidy: an explicit request to rearrange includes re-framing.
+      fitOnce.current(instance, tidyRequested);
+    }, () => {
+      layoutRunningRef.current = false;
+      // Whatever the layout settled on is the new rest position.
+      rebaseRef.current = true;
+    });
   }, [nodes, edges, relayoutToken, labelMode]);
+
+  // --- idle float ----------------------------------------------------------
+  //
+  // The prototype's graph never stopped moving, because d3.forceSimulation
+  // keeps ticking: nodes drifted like things suspended in water. A settled
+  // fcose layout is completely still, which reads as a diagram rather than a
+  // network.
+  //
+  // This is a drift, not a physics simulation, and the distinction is the
+  // whole design. A real idle simulation slowly destroys the layout and makes
+  // nodes wander away from where you last saw them. Each node instead
+  // oscillates around its OWN rest position on a small circle, so the graph
+  // breathes while its structure stays exactly where the layout put it.
+  //
+  // Phase and period come from the node id, so the motion is deterministic and
+  // nodes do not pulse in unison -- a graph where everything moves together
+  // looks like a rendering glitch rather than like floating.
+  //
+  // It stops on selection, per the request: once you have picked a paper you
+  // are reading it, and a moving target is hostile.
+  useEffect(() => {
+    const instance = cy.current;
+    if (!instance) return;
+
+    // Frozen while a node is selected, while dragging, or while cola is
+    // solving -- three different reasons the graph should hold still.
+    if (selectedId !== null) return;
+
+    let frame = 0;
+    let bases = new Map<string, cytoscape.Position>();
+    const started = performance.now();
+
+    const captureBases = () => {
+      bases = new Map(instance.nodes().map((n) => [n.id(), { ...n.position() }]));
+      rebaseRef.current = false;
+    };
+    // Deliberately NOT captured here. The layout may still be animating when
+    // this effect runs, and rest positions read mid-animation are wrong --
+    // the tick captures them once nothing else is moving anything.
+    rebaseRef.current = true;
+
+    const tick = (now: number) => {
+      frame = requestAnimationFrame(tick);
+      // Four reasons to hold still, all of them something else moving nodes.
+      if (draggingRef.current || liveRef.current || layoutRunningRef.current) return;
+      if (rebaseRef.current) captureBases();
+
+      const t = (now - started) / 1000;
+      instance.batch(() => {
+        instance.nodes().forEach((node) => {
+          const base = bases.get(node.id());
+          if (!base) return;
+          // Deterministic per node: a cheap hash of the id drives both the
+          // phase and a small period jitter.
+          const seed = Number(node.id()) * 2654435761;
+          const phase = (seed % 1000) / 1000 * Math.PI * 2;
+          const period = 5 + ((seed >>> 7) % 40) / 10; // 5.0s to 8.9s
+          const w = (Math.PI * 2) / period;
+          node.position({
+            x: base.x + Math.cos(t * w + phase) * FLOAT_RADIUS,
+            y: base.y + Math.sin(t * w + phase * 1.3) * FLOAT_RADIUS,
+          });
+        });
+      });
+    };
+
+    frame = requestAnimationFrame(tick);
+    return () => {
+      cancelAnimationFrame(frame);
+      // Park every node back on its rest position, so pausing does not leave
+      // the layout permanently offset by wherever the drift happened to be.
+      if (bases.size === 0) return;
+      instance.batch(() => {
+        instance.nodes().forEach((node) => {
+          const base = bases.get(node.id());
+          if (base) node.position({ ...base });
+        });
+      });
+    };
+  }, [nodes, selectedId]);
 
   // --- score threshold -----------------------------------------------------
   // The prototype's `applyScoreFilter`: hide unlabelled candidates below the
@@ -581,6 +747,8 @@ export function GraphCanvas({
 function runLayout(
   instance: cytoscape.Core,
   resetTo: Map<number, cytoscape.Position> | null,
+  onFrame: () => void,
+  onSettled: () => void,
 ): cytoscape.Layouts {
   if (resetTo) {
     instance.nodes().forEach((node) => {
@@ -612,7 +780,7 @@ function runLayout(
       // picture, and it costs nothing -- fcose computes the final positions
       // either way, this only animates the transition to them.
       animate: true,
-      animationDuration: 600,
+      animationDuration: LAYOUT_ANIMATION_MS,
       animationEasing: "ease-out-cubic",
       // Fit from the `ready` callback, not through fcose's own `fit` option
       // and not on `layoutstop`. Three facts, each established by measuring
@@ -634,7 +802,16 @@ function runLayout(
       // So `ready` is both the earliest and the only reliable hook.
       fit: false,
       ready: () => {
-        instance.fit(undefined, 40);
+        // First framing only -- see `hasFittedRef`. A layout triggered by an
+        // expansion must not yank the viewport away from wherever the user
+        // has it.
+        onFrame();
+      },
+      // fcose's animated path never emits `layoutstop`, so the animation's own
+      // duration is what says when nodes stop moving and the float may take
+      // over.
+      stop: () => {
+        onSettled();
       },
       idealEdgeLength: () => IDEAL_EDGE_LENGTH,
       // Seeds push harder, so the clusters they anchor stay apart.
@@ -646,5 +823,9 @@ function runLayout(
   } as cytoscape.LayoutOptions);
 
   layout.run();
+  // `stop` is unreliable on fcose's animated path -- instrumenting it showed
+  // layoutstart -> layoutready and nothing after -- so the animation duration
+  // is the backstop that actually releases the float.
+  window.setTimeout(onSettled, LAYOUT_ANIMATION_MS + 120);
   return layout;
 }
