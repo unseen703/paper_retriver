@@ -185,6 +185,34 @@ class LabelResponse(BaseModel):
     )
 
 
+class RemovalCandidate(BaseModel):
+    """One paper a removal would take. Named, not merely counted."""
+
+    id: int
+    title: str
+
+
+class RemovalPreview(BaseModel):
+    """`dry_run=true`. PLAN.md marks this the call you always make first."""
+
+    would_remove: list[RemovalCandidate]
+    count: int
+
+
+class RemovalResult(BaseModel):
+    """
+    `dry_run=false`.
+
+    `removed` and `gc_swept` stay separate because two different things
+    happened: you removed one paper, and the system collected others as a
+    consequence. One merged list would hide which was your decision, and
+    R2.14's drawer groups by exactly that distinction.
+    """
+
+    removed: list[int]
+    gc_swept: list[int]
+
+
 __all__ = [
     "AddNodeRequest",
     "LabelRequest",
@@ -192,6 +220,9 @@ __all__ = [
     "NodeDetail",
     "NodeResponse",
     "RejectedResponse",
+    "RemovalCandidate",
+    "RemovalPreview",
+    "RemovalResult",
     "RejectionDetail",
     "TransitionRefusedDetail",
 ]
