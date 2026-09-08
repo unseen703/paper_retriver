@@ -123,9 +123,7 @@ def test_the_request_model_does_not_carry_a_field_nothing_reads(client: TestClie
 
 def test_adding_a_paper_still_creates_a_seed(client: TestClient) -> None:
     """Removing the field must not change what the endpoint actually does."""
-    response = client.post(
-        f"/api/sessions/{SID}/nodes", json={"s2_paper_id": _s2_id(client)}
-    )
+    response = client.post(f"/api/sessions/{SID}/nodes", json={"s2_paper_id": _s2_id(client)})
     assert response.status_code == 201, response.text
     assert response.json()["state"] == "SEED"
 

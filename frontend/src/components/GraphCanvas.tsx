@@ -24,6 +24,7 @@ import cytoscape from "cytoscape";
 import fcose from "cytoscape-fcose";
 import cola from "cytoscape-cola";
 import type { GraphEdgeOut, GraphNodeOut } from "../api/client";
+import { isVisibleAt, navigableNodes } from "./graphInteraction";
 import {
   type LabelMode,
   stylesheet,
@@ -251,6 +252,15 @@ export function GraphCanvas({
     // --- hover: light the neighbourhood, fade the rest --------------------
     const clearHighlight = () => {
       instance.elements().removeClass("hl fade hover");
+      // Drop the per-element label override too, not just the classes.
+      //
+      // `mouseover` sets a full-title label on the hovered node, and
+      // `mouseout` removed it -- except `mouseout` early-returns while a node
+      // is pinned. So hovering a node, clicking to pin it, then moving away
+      // left that override in place permanently: with label mode set to
+      // `none`, one node kept a long title in a graph where nothing else had
+      // any. Clearing it here covers every path out of a highlight.
+      instance.nodes().removeStyle("label");
     };
 
     instance.on("mouseover", "node", (event) => {
@@ -669,8 +679,13 @@ export function GraphCanvas({
     let visible = 0;
     instance.batch(() => {
       instance.nodes().forEach((node) => {
-        const isCandidate = node.data("state") === "CANDIDATE";
-        const show = !isCandidate || (node.data("score") ?? 0) >= scoreThreshold;
+        // The same predicate the keyboard navigation uses. Two copies of this
+        // rule is how the canvas and the arrow keys came to disagree about
+        // which nodes exist.
+        const show = isVisibleAt(
+          { state: node.data("state"), score: node.data("score") } as GraphNodeOut,
+          scoreThreshold,
+        );
         node.toggleClass("hidden", !show);
         if (show) visible += 1;
       });
@@ -722,7 +737,11 @@ export function GraphCanvas({
   const step = (delta: number) => {
     const instance = cy.current;
     if (!instance || nodes.length === 0) return;
-    const ordered = [...nodes].sort((a, b) => a.id - b.id);
+    // Only what is actually drawn. Walking the full list meant roughly half
+    // of all key presses selected a node the score filter had hidden, and the
+    // viewport animated to empty space.
+    const ordered = navigableNodes(nodes, scoreThreshold);
+    if (ordered.length === 0) return;
     const current = ordered.findIndex((n) => n.id === selectedIdRef.current);
     // No selection yet: Down/Right starts at the first node, Up/Left at the last.
     const next =
@@ -732,6 +751,12 @@ export function GraphCanvas({
           : ordered.length - 1
         : (current + delta + ordered.length) % ordered.length;
     const node = ordered[next];
+    // Pin it, exactly as a click does. Without this the selection was not
+    // protected: the next mouseover repainted the highlight around whatever
+    // the pointer touched, and moving off cleared it entirely while the
+    // inspector stayed open on the keyboard-selected paper -- so the panel and
+    // the canvas disagreed about what was selected.
+    pinnedRef.current = node.id;
     onSelectRef.current?.(node.id);
     // Bring it into view and highlight it, so keyboard selection looks like
     // hover selection rather than nothing happening.

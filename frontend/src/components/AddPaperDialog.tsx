@@ -36,9 +36,19 @@ export function AddPaperDialog({ sessionId, onClose }: AddPaperDialogProps) {
   const [query, setQuery] = useState("");
   const [forcing, setForcing] = useState<{ hit: SearchHit; reason: string } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
 
+  // Focus in on open, focus back where it came from on close.
+  //
+  // `aria-modal="true"` tells assistive technology the rest of the page is
+  // inert, and that was a claim this dialog did not honour: Tab walked
+  // straight out into the page behind it, and closing dropped focus on the
+  // body rather than returning it to the button that opened the dialog -- so
+  // a keyboard user restarted their traversal from the top of the document.
   useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
     inputRef.current?.focus();
+    return () => opener?.focus?.();
   }, []);
 
   // Debounce. The timer is cleared on every keystroke, so only a pause
@@ -93,8 +103,36 @@ export function AddPaperDialog({ sessionId, onClose }: AddPaperDialogProps) {
   return (
     <div style={backdrop} onClick={onClose} role="presentation">
       <div
+        ref={panelRef}
         style={panel}
         onClick={(event) => event.stopPropagation()}
+        // On the container, not the input. Bound to the input, Escape stopped
+        // working the moment focus moved into the results list -- which Tab
+        // does immediately -- because events bubble upward, not down.
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.stopPropagation();
+            onClose();
+            return;
+          }
+          if (event.key !== "Tab") return;
+          // The trap. Cycle between the first and last focusable elements
+          // rather than letting Tab leave a dialog that claims to be modal.
+          const focusable = panelRef.current?.querySelectorAll<HTMLElement>(
+            'input:not([disabled]), button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+          );
+          if (!focusable || focusable.length === 0) return;
+          const first = focusable[0];
+          const last = focusable[focusable.length - 1];
+          const active = document.activeElement;
+          if (event.shiftKey && (active === first || !panelRef.current?.contains(active))) {
+            event.preventDefault();
+            last.focus();
+          } else if (!event.shiftKey && active === last) {
+            event.preventDefault();
+            first.focus();
+          }
+        }}
         role="dialog"
         aria-modal="true"
         aria-label="Add a paper"
@@ -103,7 +141,6 @@ export function AddPaperDialog({ sessionId, onClose }: AddPaperDialogProps) {
           ref={inputRef}
           value={raw}
           onChange={(event) => setRaw(event.target.value)}
-          onKeyDown={(event) => event.key === "Escape" && onClose()}
           placeholder="Search by title, e.g. Attention Is All You Need"
           style={{ width: "100%" }}
           aria-label="Paper title"

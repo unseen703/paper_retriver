@@ -9,6 +9,7 @@ import { ExpansionControls } from "./components/ExpansionControls";
 import { NodeInspector, type Neighbour } from "./components/NodeInspector";
 import { ViewControls } from "./components/ViewControls";
 import type { LabelMode } from "./components/stylesheet";
+import { clampThreshold } from "./components/graphInteraction";
 
 /**
  * The shell around the canvas: a legend, a couple of view controls, and a
@@ -79,9 +80,12 @@ export default function App() {
     return { min: Math.min(...scores), max: Math.max(...scores) };
   }, [nodes]);
 
-  // Null until the data arrives, then pinned to the bottom of the range: a
-  // slider that starts mid-range would hide papers before the user touched it.
-  const effectiveThreshold = scoreThreshold ?? scoreRange.min;
+  // Clamped into whatever range the graph currently has. `null` means the
+  // user has not chosen yet and resolves to the floor. Without the clamp a
+  // threshold left over from a differently-scored graph could sit above the
+  // new maximum: the input clamps its thumb but not its value, so the canvas
+  // went empty while the slider looked like it was merely at maximum.
+  const effectiveThreshold = clampThreshold(scoreThreshold, scoreRange);
 
   const neighbours = useMemo<Neighbour[]>(() => {
     if (selectedId == null) return [];

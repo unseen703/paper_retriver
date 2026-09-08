@@ -56,6 +56,13 @@ router = APIRouter(prefix="/api/sessions", tags=["search"])
 # bug, and a silent clamp would hide it.
 MAX_LIMIT = 100
 
+# Longest title we will search for. The longest real title in the corpus is
+# ~110 characters; 300 leaves generous room. Unbounded, a pasted abstract
+# became a multi-kilobyte URL, servers cap request lines around 8KB, and the
+# resulting 414 surfaced here as "Semantic Scholar is unavailable" -- a
+# confident, wrong diagnosis of a client-side problem.
+MAX_QUERY_CHARS = 300
+
 
 def _annotate(engine: Engine, session_id: int, stubs: list[PaperStub]) -> list[SearchHit]:
     """
@@ -104,7 +111,10 @@ def _annotate(engine: Engine, session_id: int, stubs: list[PaperStub]) -> list[S
 @router.get("/{sid}/search", response_model=list[SearchHit])
 async def search(
     sid: Annotated[int, Depends(existing_session)],
-    q: Annotated[str, Query(description="Paper title to search for.")],
+    q: Annotated[
+        str,
+        Query(max_length=MAX_QUERY_CHARS, description="Paper title to search for."),
+    ],
     # `Annotated` rather than a `Depends(...)` default: a call in a default
     # argument is evaluated once at import, which is a real bug for anything
     # mutable and which ruff's B008 flags. FastAPI reads either form, so there

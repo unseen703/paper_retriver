@@ -9,7 +9,7 @@ was asked, and the only place that surfaces is production.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -20,11 +20,17 @@ class AddNodeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     s2_paper_id: str = Field(min_length=1)
-    # A `Literal` rather than a free string: R1 adds seeds only. CANDIDATE is
-    # the expander's to write and LIKED/DISLIKED belong to R2's labelling
-    # endpoint, which owns the transition validation. Accepting them here would
-    # be a second, unvalidated way into the state machine.
-    as_state: Literal["SEED"] = "SEED"
+    # There is deliberately no `as_state`. It used to be here as
+    # `Literal["SEED"]`, declared in the OpenAPI contract and therefore in the
+    # generated TypeScript -- and never read, because `add_seed` hard-codes
+    # SEED. A field a caller can set that changes nothing is a promise the
+    # server does not keep, and it becomes a live bug the moment R2 widens the
+    # Literal: the request would validate, the caller would believe it had
+    # asked for a state, and a SEED would be created regardless.
+    #
+    # R2 adds states through `PATCH /nodes/{id}`, which owns transition
+    # validation. Until then `extra="forbid"` turns a stale caller's
+    # assumption into a 422 they can see.
     force: bool = Field(
         default=False,
         description=(
