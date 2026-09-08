@@ -67,4 +67,75 @@ class ExpandResponse(BaseModel):
     )
 
 
-__all__ = ["ExpandRequest", "ExpandResponse"]
+class JobAccepted(BaseModel):
+    """
+    The 202 body (R2.4).
+
+    Just the id and where to look. The work has not started, so there is
+    nothing else true to say yet, and inventing an optimistic count here would
+    be a number the poll then contradicts.
+    """
+
+    job_id: int
+    session_id: int
+    status: str = "QUEUED"
+    poll: str = Field(description="Where to poll for this job's progress.")
+
+
+class JobProgress(BaseModel):
+    """
+    Counters as far as the run has got.
+
+    Every field is optional because they genuinely are unknown until the stage
+    that produces them completes -- and `null` is the honest way to say "not
+    yet", where a 0 would read as "none found".
+    """
+
+    pool: int | None = Field(default=None, description="Candidates pooled. Null until pooling.")
+    filtered: int | None = Field(
+        default=None, description="Boundary papers stored without a node. Null until fetching ends."
+    )
+    added: int | None = Field(default=None, description="Nodes admitted. Null until ranking ends.")
+    api_calls: int | None = None
+    cache_hits: int | None = None
+
+
+class JobStatus(BaseModel):
+    """
+    What `GET /expansions/{id}` returns -- PLAN.md's `{status, stage, progress}`.
+
+    `stage` is derived from the counters rather than stored: a stored stage is
+    a second place for the truth to live, and it is the copy that goes stale
+    when a process dies mid-run.
+
+    `result` is present only once the job is DONE, and carries exactly what the
+    synchronous R1.18 response carried. The client needs `added_paper_ids` to
+    update the graph, and making it fetch the whole graph again to discover
+    three new nodes would undo the point of reporting them at all.
+    """
+
+    job_id: int
+    session_id: int
+    status: str = Field(description="QUEUED | RUNNING | DONE | FAILED | CANCELLED.")
+    stage: str = Field(description="QUEUED | FETCHING | POOLING | RANKING | ADDING | DONE | ...")
+    progress: JobProgress
+    error: str | None = Field(
+        default=None,
+        description=(
+            "Why the run stopped early, or why it failed. A DONE job with an"
+            " error was truncated, not broken -- a partial expansion is a"
+            " success."
+        ),
+    )
+    result: ExpandResponse | None = Field(default=None, description="Present once status is DONE.")
+    started_at: str | None = None
+    finished_at: str | None = None
+
+
+__all__ = [
+    "ExpandRequest",
+    "ExpandResponse",
+    "JobAccepted",
+    "JobProgress",
+    "JobStatus",
+]

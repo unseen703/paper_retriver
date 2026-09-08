@@ -177,6 +177,27 @@ def get_nodes_by_state(conn: Connection, session_id: int) -> dict[str, set[int]]
     return grouped
 
 
+def node_ids_added_by(conn: Connection, session_id: int, expansion_id: int) -> list[int]:
+    """
+    The papers one expansion admitted, sorted.
+
+    R2.4's poll needs this after the fact: the worker thread that computed the
+    list is not the thread answering the request, and a restart between the two
+    must not lose the answer. `added_by` is written by the same transaction
+    that admitted the nodes, so reading it back cannot disagree with the graph
+    -- and a node removed since then is correctly absent, because it is.
+    """
+    rows = conn.execute(
+        text(
+            "SELECT paper_id FROM graph_nodes"
+            " WHERE session_id = :session_id AND added_by = :expansion_id"
+            " ORDER BY paper_id"
+        ),
+        {"session_id": session_id, "expansion_id": expansion_id},
+    )
+    return [int(row[0]) for row in rows]
+
+
 def nodes_present(conn: Connection, session_id: int, paper_ids: list[int]) -> set[int]:
     """
     Which of `paper_ids` have a node in this session. Chunked.
@@ -253,6 +274,7 @@ __all__ = [
     "get_node_ids",
     "get_nodes",
     "get_nodes_by_state",
+    "node_ids_added_by",
     "nodes_present",
     "remove_node",
     "set_position",

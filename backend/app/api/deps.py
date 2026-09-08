@@ -23,30 +23,36 @@ usable transport at all.
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 from fastapi import Depends, HTTPException, Path
 from sqlalchemy import Engine, text
 
 from app.clients.s2 import S2Client
 
+if TYPE_CHECKING:  # pragma: no cover - import cycle: jobs imports nothing from here
+    from app.services.jobs import JobWorker
+
 _engine: Engine | None = None
 _client: S2Client | None = None
+_worker: JobWorker | None = None
 
 
-def set_runtime(engine: Engine, client: S2Client) -> None:
+def set_runtime(engine: Engine, client: S2Client, worker: JobWorker | None = None) -> None:
     """Install the process-wide resources. Called once, by the lifespan."""
-    global _engine, _client
+    global _engine, _client, _worker
     _engine = engine
     _client = client
+    _worker = worker
 
 
 def clear_runtime() -> None:
     """Drop the references on shutdown so a second app in the same process
     cannot inherit a disposed engine."""
-    global _engine, _client
+    global _engine, _client, _worker
     _engine = None
     _client = None
+    _worker = None
 
 
 def get_engine() -> Engine:
@@ -66,6 +72,20 @@ def get_s2_client() -> S2Client:
     if _client is None:  # pragma: no cover - lifespan always runs first
         raise RuntimeError("S2 client not initialised; is the app running?")
     return _client
+
+
+def get_worker() -> JobWorker:
+    """
+    The process-wide expansion worker (R2.4).
+
+    A dependency rather than a module-level singleton so the 409 and the queue
+    are testable, and so a request cannot accidentally construct a second
+    worker -- two threads draining the same table would defeat the
+    one-expansion-per-session rule the queue exists to enforce.
+    """
+    if _worker is None:  # pragma: no cover - lifespan always runs first
+        raise RuntimeError("job worker not initialised; is the app running?")
+    return _worker
 
 
 def existing_session(
@@ -100,5 +120,6 @@ __all__ = [
     "existing_session",
     "get_engine",
     "get_s2_client",
+    "get_worker",
     "set_runtime",
 ]
