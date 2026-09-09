@@ -29,9 +29,24 @@ export interface ClearGraphDialogProps {
   /** Shown in the sentence, so the size of the decision is visible. */
   nodeCount: number;
   onClose: () => void;
+  /**
+   * Called once the graph is actually gone.
+   *
+   * Separate from `onClose` because they mean different things: the dialog
+   * closes on Cancel too. Anything still pointing into the graph -- the
+   * selection above all -- has to be dropped here, since `selectedId` is an id
+   * into a graph that no longer exists and the inspector would sit open
+   * fetching a 404 for a paper nobody deleted on purpose.
+   */
+  onCleared?: () => void;
 }
 
-export function ClearGraphDialog({ sessionId, nodeCount, onClose }: ClearGraphDialogProps) {
+export function ClearGraphDialog({
+  sessionId,
+  nodeCount,
+  onClose,
+  onCleared,
+}: ClearGraphDialogProps) {
   const [typed, setTyped] = useState("");
   const queryClient = useQueryClient();
 
@@ -43,6 +58,7 @@ export function ClearGraphDialog({ sessionId, nodeCount, onClose }: ClearGraphDi
       queryClient.invalidateQueries({ queryKey: ["stats", sessionId] });
       queryClient.invalidateQueries({ queryKey: ["review", sessionId] });
       queryClient.invalidateQueries({ queryKey: ["search", sessionId] });
+      onCleared?.();
       onClose();
     },
   });

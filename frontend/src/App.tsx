@@ -275,6 +275,8 @@ export default function App() {
             sessionId={sessionId}
             nodeCount={nodes.length}
             onClose={() => setClearOpen(false)}
+            // The selection is an id into a graph that no longer exists.
+            onCleared={() => setSelected(null)}
           />
         )}
 

@@ -17,7 +17,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ClearGraphDialog } from "./ClearGraphDialog";
 
-function renderDialog(onClose = vi.fn(), nodeCount = 127) {
+function renderDialog(onClose = vi.fn(), nodeCount = 127, onCleared = vi.fn()) {
   const fetchMock = vi.fn(async () => ({
     ok: true,
     status: 200,
@@ -27,10 +27,15 @@ function renderDialog(onClose = vi.fn(), nodeCount = 127) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
-      <ClearGraphDialog sessionId={1} nodeCount={nodeCount} onClose={onClose} />
+      <ClearGraphDialog
+        sessionId={1}
+        nodeCount={nodeCount}
+        onClose={onClose}
+        onCleared={onCleared}
+      />
     </QueryClientProvider>,
   );
-  return { fetchMock, onClose };
+  return { fetchMock, onClose, onCleared };
 }
 
 const confirmButton = () => screen.getByRole("button", { name: /^clear graph$/i });
@@ -111,6 +116,25 @@ describe("ClearGraphDialog", () => {
     fireEvent.change(wordField(), { target: { value: "clear" } });
     fireEvent.click(confirmButton());
     await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
+  it("tells the app the graph is gone, so nothing keeps pointing into it", async () => {
+    // `selectedId` is an id into a graph that no longer exists. Left alone,
+    // the inspector stays open and fetches a node the session no longer has,
+    // which comes back 404 -- an error panel for a paper nobody deleted on
+    // purpose.
+    const onCleared = vi.fn();
+    renderDialog(vi.fn(), 5, onCleared);
+    fireEvent.change(wordField(), { target: { value: "clear" } });
+    fireEvent.click(confirmButton());
+    await waitFor(() => expect(onCleared).toHaveBeenCalled());
+  });
+
+  it("does not report a clear that never happened", () => {
+    const onCleared = vi.fn();
+    renderDialog(vi.fn(), 5, onCleared);
+    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
+    expect(onCleared).not.toHaveBeenCalled();
   });
 
   it("cancels without calling anything", () => {

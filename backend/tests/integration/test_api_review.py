@@ -238,7 +238,7 @@ def test_removed_distinguishes_your_decision_from_the_sweep(
 
     by_reason = {r["reason_code"]: r["count"] for r in _review(client)["removed"]["by_reason"]}  # type: ignore[index,union-attr]
     assert by_reason == {"GC_SWEPT": 1}
-    assert orphan not in (0,)
+    assert [p["paper_id"] for p in _review(client)["removed"]["papers"]] == [orphan]  # type: ignore[index,union-attr]
 
 
 def test_a_restored_paper_leaves_the_removed_tab(client: TestClient, engine: Engine) -> None:
