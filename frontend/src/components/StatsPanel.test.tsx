@@ -12,7 +12,7 @@
  * rather than sit there as bare figures nobody knows how to read.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { StatsPanel } from "./StatsPanel";
 import type { StatsResponse } from "../api/client";
@@ -105,5 +105,58 @@ describe("StatsPanel", () => {
     );
     expect(panel).toHaveTextContent("0.00");
     expect(panel).toHaveTextContent("0%");
+  });
+});
+
+describe("StatsPanel collapsing", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  /**
+   * The panel is opaque and captures pointer events over its corner of the
+   * canvas, so a node underneath cannot be dragged, hovered or clicked. With
+   * R2.12 persisting positions a node can sit there permanently, and the only
+   * escape was Tidy -- which rearranges the entire graph to free one paper.
+   *
+   * Collapsing is the escape hatch, and it is also why the panel is allowed to
+   * capture events at all: it now has a control worth clicking.
+   */
+  it("offers a way to collapse itself", async () => {
+    await renderPanel(stats());
+    expect(screen.getByRole("button", { name: /statistics/i })).toBeInTheDocument();
+  });
+
+  it("shows the figures by default", async () => {
+    const panel = await renderPanel(stats());
+    expect(panel).toHaveTextContent("nodes");
+  });
+
+  it("hides the figures once collapsed, freeing the canvas underneath", async () => {
+    const panel = await renderPanel(stats());
+    fireEvent.click(screen.getByRole("button", { name: /statistics/i }));
+    expect(panel).not.toHaveTextContent("avg degree");
+  });
+
+  it("comes back when expanded again", async () => {
+    const panel = await renderPanel(stats());
+    const toggle = screen.getByRole("button", { name: /statistics/i });
+    fireEvent.click(toggle);
+    fireEvent.click(toggle);
+    expect(panel).toHaveTextContent("avg degree");
+  });
+
+  it("reports its state to assistive technology", async () => {
+    await renderPanel(stats());
+    const toggle = screen.getByRole("button", { name: /statistics/i });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("keeps the node count visible while collapsed", async () => {
+    // Collapsing should cost you the detail, not the headline. A panel that
+    // vanishes entirely gives you no reason to open it again.
+    const panel = await renderPanel(stats({ node_count: 42 }));
+    fireEvent.click(screen.getByRole("button", { name: /statistics/i }));
+    expect(panel).toHaveTextContent("42");
   });
 });
