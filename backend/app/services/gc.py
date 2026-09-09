@@ -28,6 +28,17 @@ node at degree zero stays, and so does a disconnected DISLIKED one -- the
 latter still carries negative signal, and re-fetching it later would spend API
 budget rediscovering something already judged.
 
+That last rule is stated in PLAN.md over *states*, and states turn out to be
+too narrow a place to read judgment from. Un-liking a paper and restoring a
+removed one both leave it an ordinary CANDIDATE, so a state-only reading lets
+the next sweep collect the very paper the user just acted on -- turning
+"unlike" into a delayed "delete" and undoing R2.8's restore, which PLAN.md
+calls the only way back. **So the exemption is read from the event log
+instead: a paper whose latest event the user authored is never swept.** That
+is a deliberate widening of PLAN.md's sentence, in the direction that makes
+its two neighbouring promises true; an expansion's candidates carry no events
+at all, so the sweep keeps doing its job on everything it was meant for.
+
 Sweeping removes *graph membership*, never papers or edges. A swept paper
 stays in the corpus doing structural work: it still couples the papers that
 cite it. It also gets a `GC_SWEPT` event, which is a tombstone, so expansion
@@ -85,17 +96,17 @@ def gc_sweep(
     *,
     max_depth: int = DEFAULT_MAX_DEPTH,
     dry_run: bool = False,
-    protect: int | None = None,
 ) -> list[int]:
     """
     Remove candidates no longer justified by any anchor. Returns their ids.
 
-    `protect` exempts one paper from the sweep, and exists for a case that is
-    easy to get wrong: un-liking a paper makes it a CANDIDATE, and if it was
-    the graph's only anchor it is then unreachable from any anchor -- including
-    itself. Sweeping it would turn "unlike" into "delete", which is a different
-    verb with a different audit trail, and the whole state machine exists to
-    keep those apart. The user asked to stop favouring a paper, not to lose it.
+    Papers the user has acted on most recently are exempt, however unreachable
+    they are -- see the module docstring. There is no per-call exemption
+    parameter: one existed, protecting the node whose relabelling triggered the
+    sweep, and it protected that node from *that* sweep only. The paper then
+    disappeared during some later, unrelated action, which is the same bug with
+    a delay on it and harder to see. The rule belongs in the definition of
+    "sweepable", not at one call site.
 
     `dry_run` computes the same answer and writes nothing, so the confirmation
     dialog can promise exactly what the real call will do -- BUILD.md requires
@@ -108,6 +119,7 @@ def gc_sweep(
     by_state = graph_repo.get_nodes_by_state(conn, session_id)
     anchors = {pid for state in ANCHOR_STATES for pid in by_state.get(state, ())}
     candidates = set(by_state.get("CANDIDATE", ()))
+    held = events_repo.user_held_paper_ids(conn, session_id)
 
     adjacency = _undirected_neighbours(conn, session_id)
 
@@ -123,18 +135,31 @@ def gc_sweep(
         frontier = nxt
         depth += 1
 
-    orphans = sorted(candidates - marked - ({protect} if protect is not None else set()))
+    orphans = sorted(candidates - marked - held)
 
     if dry_run or not orphans:
         return orphans
 
     for paper_id in orphans:
+        # Read the node before deleting it: its depth is the only record of how
+        # far from a seed the paper sat, and R2.8's restore has to put it back
+        # at that distance rather than invent one. The tombstone event's
+        # payload is where that survives -- `graph_nodes` is about to lose it.
+        node = graph_repo.get_node(conn, session_id, paper_id)
         graph_repo.remove_node(conn, session_id, paper_id)
         # actor=SYSTEM distinguishes a sweep from a removal the user asked for.
         # R2.14's drawer groups by that, and it is what tells you whether a
         # paper left because you removed it or because it lost its
-        # justification.
-        events_repo.append_event(conn, session_id, paper_id, "GC_SWEPT", actor="SYSTEM")
+        # justification. It is also what keeps a swept paper sweepable: only a
+        # USER event exempts one.
+        events_repo.append_event(
+            conn,
+            session_id,
+            paper_id,
+            "GC_SWEPT",
+            actor="SYSTEM",
+            payload={"depth": node.depth} if node is not None else None,
+        )
 
     logger.info(
         "GC_SWEPT session=%s count=%s anchors=%s max_depth=%s",

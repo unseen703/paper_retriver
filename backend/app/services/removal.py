@@ -29,7 +29,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
-from sqlalchemy import Engine
+from sqlalchemy import Connection, Engine
 
 from app.repo import events as events_repo
 from app.repo import graph as graph_repo
@@ -40,10 +40,18 @@ logger = logging.getLogger(__name__)
 
 
 class NodeNotInSession(RuntimeError):
-    """No node for this paper in this session -- nothing to remove or restore."""
+    """
+    Nothing here to act on -- both callers map it to 404.
 
-    def __init__(self, session_id: int, paper_id: int) -> None:
-        super().__init__(f"no node {paper_id} in session {session_id}")
+    The two ways to reach it are different facts and say so: removal fails
+    because the paper has no node in this session, restore because the paper is
+    not in the corpus at all. One type, because the caller's response is the
+    same either way; two messages, because whoever reads the log needs to know
+    which happened.
+    """
+
+    def __init__(self, session_id: int, paper_id: int, message: str | None = None) -> None:
+        super().__init__(message or f"no node {paper_id} in session {session_id}")
         self.session_id = session_id
         self.paper_id = paper_id
 
@@ -88,8 +96,9 @@ def remove_node(
     reading of an omitted parameter is the one that does not destroy anything.
     """
     with engine.begin() as conn:
-        if graph_repo.get_node(conn, session_id, paper_id) is None:
-            raise NotRemovedOrMissing(session_id, paper_id)
+        node = graph_repo.get_node(conn, session_id, paper_id)
+        if node is None:
+            raise NodeNotInSession(session_id, paper_id)
 
         if dry_run:
             # Predict by simulating: take the node out inside a transaction
@@ -103,7 +112,17 @@ def remove_node(
             return RemovalPlan(removed=(paper_id,), gc_swept=swept, titles=titles)
 
         graph_repo.remove_node(conn, session_id, paper_id)
-        events_repo.append_event(conn, session_id, paper_id, "REMOVED", actor="USER")
+        # The depth rides along in the payload. `graph_nodes` is the only place
+        # it lived and that row is now gone, so without this a restore would
+        # have to invent a distance from the seeds -- and did, always 1.
+        events_repo.append_event(
+            conn,
+            session_id,
+            paper_id,
+            "REMOVED",
+            actor="USER",
+            payload={"depth": node.depth},
+        )
         swept = tuple(gc_sweep(conn, session_id))
         titles = _titles(conn, [paper_id, *swept])
 
@@ -121,32 +140,49 @@ def restore_node(engine: Engine, session_id: int, paper_id: int) -> int:
     It returns as CANDIDATE rather than to whatever it was: the label it
     carried was part of a judgment you then reversed by removing it, and
     quietly restoring that label would put words in your mouth.
+
+    Its **depth** does come back, from the tombstone event's payload. Depth is
+    not an opinion -- it is how far the paper sits from a seed, which the
+    budget and the candidate pool both read, and it did not change while the
+    paper was away.
     """
     with engine.begin() as conn:
         if papers_repo.get_papers_by_ids(conn, [paper_id]) == []:
-            raise NodeNotInSession(session_id, paper_id)
+            raise NodeNotInSession(session_id, paper_id, f"no paper {paper_id} in the corpus")
         if paper_id not in events_repo.removed_paper_ids(conn, session_id):
             raise NotRemoved(session_id, paper_id)
 
+        depth = _depth_at_removal(conn, session_id, paper_id)
+        # RESTORED is a USER event, and the sweep exempts a paper whose latest
+        # event the user authored. That is what stops the next unrelated label
+        # change from collecting what was just deliberately brought back.
         events_repo.append_event(conn, session_id, paper_id, "RESTORED", actor="USER")
-        graph_repo.add_node(conn, session_id, paper_id, "CANDIDATE", depth=1)
+        graph_repo.add_node(conn, session_id, paper_id, "CANDIDATE", depth=depth)
 
-    logger.info("node_restored session=%s paper_id=%s", session_id, paper_id)
+    logger.info("node_restored session=%s paper_id=%s depth=%s", session_id, paper_id, depth)
     return paper_id
 
 
-def _titles(conn: object, paper_ids: list[int]) -> dict[int, str]:
-    from sqlalchemy import Connection
+def _depth_at_removal(conn: Connection, session_id: int, paper_id: int) -> int:
+    """
+    The depth recorded on the most recent tombstone, or 1 if there is none.
 
-    assert isinstance(conn, Connection)
+    The fallback covers papers tombstoned before removal started recording
+    depth. Guessing 1 there is no worse than what every restore used to do, and
+    the alternative -- refusing to restore an older tombstone -- would punish
+    the user for a change they did not make.
+    """
+    for event in reversed(events_repo.get_events(conn, session_id, paper_id)):
+        if event.event_type in events_repo.TOMBSTONE_EVENTS:
+            depth = event.payload.get("depth")
+            return int(depth) if isinstance(depth, int) else 1
+    return 1
+
+
+def _titles(conn: Connection, paper_ids: list[int]) -> dict[int, str]:
     return {
         p.id: p.title for p in papers_repo.get_papers_by_ids(conn, paper_ids) if p.id is not None
     }
-
-
-# Kept as an alias so the two "nothing here" failures read distinctly at the
-# call site while sharing one type for the 404 mapping.
-NotRemovedOrMissing = NodeNotInSession
 
 
 __all__ = [
