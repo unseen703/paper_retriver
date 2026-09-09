@@ -199,9 +199,53 @@ def test_an_api_key_in_a_url_is_not_logged_verbatim(log_file: Path) -> None:
     assert "super-secret-value" not in log_file.read_text(encoding="utf-8")
 
 
-def test_settings_repr_never_leaks_through_a_log_event(log_file: Path) -> None:
+def test_a_configured_key_never_reaches_the_log(
+    log_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    The property that matters: the key's *value* does not appear.
+
+    This used to assert `"**********" in log` -- the mask SecretStr's repr
+    uses. That passed only by accident, and only on a machine with a key in
+    `.env`. Two mechanisms collide here: SecretStr renders the value as
+    `SecretStr('**********')`, and then `_redact` rewrites `s2_api_key=` plus
+    everything up to the next quote, giving `s2_api_key=REDACTED'**********')`.
+    The asterisks that survived were the tail of a mangled repr, not evidence
+    of anything.
+
+    An env var beats the `.env` file in pydantic-settings, so this sets a key
+    the assertion can actually look for -- checking that a real secret is
+    absent, rather than that a particular masking artefact is present.
+    """
     from app.config import Settings
 
+    monkeypatch.setenv("S2_API_KEY", "sk-live-this-must-never-be-logged")
     structlog.get_logger().info("config", settings=repr(Settings()))
-    assert "SecretStr" not in log_file.read_text(encoding="utf-8") or True
-    assert "**********" in log_file.read_text(encoding="utf-8")
+
+    logged = log_file.read_text(encoding="utf-8")
+    assert "sk-live-this-must-never-be-logged" not in logged
+    assert "REDACTED" in logged, "something must have actively masked it"
+
+
+def test_the_repr_is_safe_when_no_key_is_configured(
+    log_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    The configuration CI actually runs in, and the one the old assertion
+    failed in: no `.env`, no key, so `s2_api_key` is None.
+
+    There is nothing to leak, and the line must still be emitted rather than
+    the logger falling over on a missing value -- a config event that vanishes
+    when a key is absent is exactly the line you need when a key is absent.
+    """
+    from app.config import Settings
+
+    monkeypatch.delenv("S2_API_KEY", raising=False)
+    # `_env_file=None` ignores the developer's own .env, which would otherwise
+    # supply a key and make this test pass locally for the wrong reason -- the
+    # same trap the old one fell into, in the other direction.
+    structlog.get_logger().info("config", settings=repr(Settings(_env_file=None)))
+
+    logged = log_file.read_text(encoding="utf-8")
+    assert '"event": "config"' in logged
+    assert "s2_api_key" in logged
