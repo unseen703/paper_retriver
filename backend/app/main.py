@@ -41,6 +41,7 @@ from app.api.graph import router as graph_router
 from app.api.node_detail import router as node_detail_router
 from app.api.nodes import router as nodes_router
 from app.api.search import router as search_router
+from app.api.sessions import router as sessions_router
 from app.clients.cache import ResponseCache
 from app.clients.s2 import S2Client
 from app.config import filters, ranking, settings
@@ -139,6 +140,9 @@ def create_app(db_url: str | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    # Before the session-scoped routers: `/api/sessions` must not be
+    # shadowed by `/api/sessions/{sid}/...` matching an empty segment.
+    application.include_router(sessions_router)
     application.include_router(search_router)
     application.include_router(nodes_router)
     application.include_router(node_detail_router)

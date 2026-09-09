@@ -4,6 +4,40 @@
  */
 
 export interface paths {
+    "/api/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Sessions
+         * @description Every session, oldest first, each with the size of its graph.
+         *
+         *     The node count is what makes a switcher usable: without it every row looks
+         *     identical, and the session holding your work is indistinguishable from the
+         *     empty one you made by accident.
+         *
+         *     Ordered by id rather than by name or recency -- a list someone reads
+         *     top-down should not reshuffle as they add to it (CLAUDE.md rule 7).
+         */
+        get: operations["list_sessions_api_sessions_get"];
+        put?: never;
+        /**
+         * Create Session
+         * @description Start a new, empty graph over the same corpus.
+         *
+         *     Nothing is copied from any existing session -- that is the point. The
+         *     papers are already there; the opinions are not.
+         */
+        post: operations["create_session_api_sessions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/{sid}/search": {
         parameters: {
             query?: never;
@@ -331,6 +365,14 @@ export interface components {
              * @description Nodes removed from this session's graph. The corpus -- papers, authors, edges, cached responses -- is untouched: that is what the API budget bought, and it is shared across sessions.
              */
             cleared: number;
+        };
+        /**
+         * CreateSessionRequest
+         * @description Start a new, empty graph over the same corpus.
+         */
+        CreateSessionRequest: {
+            /** Name */
+            name: string;
         };
         /**
          * ExpandRequest
@@ -972,6 +1014,23 @@ export interface components {
             previously_removed: boolean;
         };
         /**
+         * SessionOut
+         * @description One workspace, as the switcher lists it.
+         */
+        SessionOut: {
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
+            /** Created At */
+            created_at: string;
+            /**
+             * Node Count
+             * @description Papers in this session's graph. Without it every row in the switcher looks the same, and the session holding your work is indistinguishable from the empty one you made by accident.
+             */
+            node_count: number;
+        };
+        /**
          * StatsResponse
          * @description `<StatsPanel>` v1 (R2.13).
          *
@@ -1051,6 +1110,59 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_sessions_api_sessions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionOut"][];
+                };
+            };
+        };
+    };
+    create_session_api_sessions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     search_api_sessions__sid__search_get: {
         parameters: {
             query: {

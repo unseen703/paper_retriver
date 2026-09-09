@@ -11,6 +11,7 @@ import { ViewControls } from "./components/ViewControls";
 import { StatsPanel } from "./components/StatsPanel";
 import { ReviewDrawer } from "./components/ReviewDrawer";
 import { ClearGraphDialog } from "./components/ClearGraphDialog";
+import { SessionSwitcher } from "./components/SessionSwitcher";
 import type { LabelMode } from "./components/stylesheet";
 import { clampThreshold, type SavedPosition } from "./components/graphInteraction";
 
@@ -32,6 +33,7 @@ export default function App() {
   const sessionId = useView((s) => s.sessionId);
   const selectedId = useView((s) => s.selectedId);
   const setSelected = useView((s) => s.setSelected);
+  const setSession = useView((s) => s.setSession);
 
   const [showFixture, setShowFixture] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -173,6 +175,9 @@ export default function App() {
           <button onClick={() => setDialogOpen(true)} disabled={showFixture}>
             + Add paper
           </button>
+          {/* R2.16. First in the toolbar: everything to its right operates on
+              whichever session this names. */}
+          <SessionSwitcher sessionId={sessionId} onSwitch={setSession} />
           <ExpansionControls sessionId={sessionId} disabled={showFixture} />
           {/* R2.14. The drawer is where a filter stops being a black box, so
               it needs to be one click away rather than buried. */}
