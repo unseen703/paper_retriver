@@ -11,7 +11,9 @@ edges **within this response**, not within the corpus -- see `GraphNodeOut`.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+import math
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class Position(BaseModel):
@@ -79,4 +81,67 @@ class GraphResponse(BaseModel):
     meta: GraphMeta
 
 
-__all__ = ["GraphEdgeOut", "GraphMeta", "GraphNodeOut", "GraphResponse", "Position"]
+class NodePosition(BaseModel):
+    """Where one node sits, as the client laid it out (R2.12)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    paper_id: int = Field(ge=1)
+    x: float
+    y: float
+
+    @field_validator("x", "y")
+    @classmethod
+    def _must_be_finite(cls, value: float) -> float:
+        """
+        Reject NaN and the infinities.
+
+        JSON has no way to spell them, but Python's decoder accepts them and a
+        float column stores them without complaint. They come back as a
+        position Cytoscape cannot draw, so the node silently disappears with
+        nothing logged anywhere. The boundary is the only place this is
+        findable.
+        """
+        if not math.isfinite(value):
+            raise ValueError("coordinates must be finite")
+        return value
+
+
+class SavePositionsRequest(BaseModel):
+    """
+    A whole arrangement in one request (R2.12).
+
+    Bulk because a settled layout is one event: a 200-node graph sent one node
+    at a time would be 200 transactions describing a single act.
+
+    The cap is `max_nodes` with room to spare. A graph cannot exceed that, so a
+    larger list is either a bug or something not worth writing.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    positions: list[NodePosition] = Field(default_factory=list, max_length=5000)
+
+
+class SavePositionsResponse(BaseModel):
+    """How many rows were actually written."""
+
+    saved: int = Field(
+        description=(
+            "Rows updated. Lower than what was sent when a node was removed"
+            " between the layout settling and this request landing -- a race,"
+            " not an error, but one worth being able to see."
+        )
+    )
+
+
+__all__ = [
+    "GraphEdgeOut",
+    "GraphMeta",
+    "GraphNodeOut",
+    "GraphResponse",
+    "NodePosition",
+    "Position",
+    "SavePositionsRequest",
+    "SavePositionsResponse",
+]

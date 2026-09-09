@@ -26,6 +26,7 @@ export type NodeResponse = components["schemas"]["NodeResponse"];
 export type ExpandResponse = components["schemas"]["ExpandResponse"];
 export type JobAccepted = components["schemas"]["JobAccepted"];
 export type JobStatus = components["schemas"]["JobStatus"];
+export type NodePosition = components["schemas"]["NodePosition"];
 export type HealthResponse = components["schemas"]["HealthResponse"];
 
 /**
@@ -104,6 +105,18 @@ export const api = {
     request<JobAccepted>(`/api/sessions/${sid}/expansions`, {
       method: "POST",
       body: JSON.stringify({ hops: 1, max_new: maxNew }),
+    }),
+
+  /**
+   * Persist the current arrangement (R2.12).
+   *
+   * PUT because saving the same layout twice is the same layout, and this is
+   * called after every settled layout and every drag.
+   */
+  savePositions: (sid: number, positions: NodePosition[]) =>
+    request<{ saved: number }>(`/api/sessions/${sid}/positions`, {
+      method: "PUT",
+      body: JSON.stringify({ positions }),
     }),
 
   expansion: (sid: number, jobId: number) =>
