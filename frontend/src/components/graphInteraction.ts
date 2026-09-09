@@ -100,6 +100,25 @@ export function partitionByQuery(
   return { matched, rest };
 }
 
+/**
+ * How hard fcose pushes a node away from its neighbours, by state.
+ *
+ * Seeds already got this (PLAN.md M6: "seeds push harder, so the clusters
+ * they anchor stay apart"), but liked papers did not -- so once you had liked
+ * a handful of candidates, those were exactly the nodes that ended up buried
+ * in the densest part of the graph, which is the one place you can least
+ * afford to lose track of the papers you have already vetted. Both anchor
+ * states get the same extra push.
+ *
+ * A named export rather than the inline closure it replaced: it was tuned by
+ * eye against a live graph, and there was no way to pin the two numbers or
+ * the SEED/LIKED split down as a guarantee without giving the decision
+ * somewhere to live outside a Cytoscape layout callback.
+ */
+export function nodeRepulsion(state: GraphNodeOut["state"] | null | undefined): number {
+  return state === "SEED" || state === "LIKED" ? 20000 : 6000;
+}
+
 /** One node's saved place, in the shape `PUT /positions` accepts. */
 export interface SavedPosition {
   paper_id: number;

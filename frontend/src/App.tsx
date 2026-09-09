@@ -10,6 +10,7 @@ import { NodeInspector, type Neighbour } from "./components/NodeInspector";
 import { ViewControls } from "./components/ViewControls";
 import { StatsPanel } from "./components/StatsPanel";
 import { ReviewDrawer } from "./components/ReviewDrawer";
+import { ClearGraphDialog } from "./components/ClearGraphDialog";
 import type { LabelMode } from "./components/stylesheet";
 import { clampThreshold, type SavedPosition } from "./components/graphInteraction";
 
@@ -35,6 +36,7 @@ export default function App() {
   const [showFixture, setShowFixture] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [clearOpen, setClearOpen] = useState(false);
   const [hoveredId, setHoveredId] = useState<number | null>(null);
   const [relayoutToken, setRelayoutToken] = useState(0);
   const [resetViewToken, setResetViewToken] = useState(0);
@@ -174,6 +176,16 @@ export default function App() {
           <ExpansionControls sessionId={sessionId} disabled={showFixture} />
           {/* R2.14. The drawer is where a filter stops being a black box, so
               it needs to be one click away rather than buried. */}
+          {/* R2.15. Destructive, so it sits after the constructive controls
+              and opens a dialog rather than acting on the click. */}
+          <button
+            type="button"
+            onClick={() => setClearOpen(true)}
+            disabled={showFixture || nodes.length === 0}
+            title="Empty this graph — the papers already fetched are kept"
+          >
+            Clear
+          </button>
           <button
             type="button"
             onClick={() => setReviewOpen((was) => !was)}
@@ -253,6 +265,14 @@ export default function App() {
         {/* The inspector is the detail query's only consumer now, so selecting
             a node fetches once and renders everything rather than fetching to
             show three author names in the footer. */}
+        {!showFixture && clearOpen && (
+          <ClearGraphDialog
+            sessionId={sessionId}
+            nodeCount={nodes.length}
+            onClose={() => setClearOpen(false)}
+          />
+        )}
+
         {!showFixture && reviewOpen && (
           <ReviewDrawer
             sessionId={sessionId}

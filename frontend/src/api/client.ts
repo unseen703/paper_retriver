@@ -29,6 +29,7 @@ export type JobStatus = components["schemas"]["JobStatus"];
 export type NodePosition = components["schemas"]["NodePosition"];
 export type StatsResponse = components["schemas"]["StatsResponse"];
 export type ReviewResponse = components["schemas"]["ReviewResponse"];
+export type ClearGraphResponse = components["schemas"]["ClearGraphResponse"];
 export type ReviewBucketOut = components["schemas"]["ReviewBucketOut"];
 export type ReviewPaperOut = components["schemas"]["ReviewPaperOut"];
 export type HealthResponse = components["schemas"]["HealthResponse"];
@@ -131,6 +132,16 @@ export const api = {
    * as the whole -- a failure whose symptom is that everything looks fine.
    */
   stats: (sid: number) => request<StatsResponse>(`/api/sessions/${sid}/stats`),
+
+  /**
+   * Empty this session's graph (R2.15).
+   *
+   * `confirm` is not optional here for the same reason it is not optional on
+   * the server: there should be no way to spell this call that fires by
+   * accident.
+   */
+  clearGraph: (sid: number) =>
+    request<ClearGraphResponse>(`/api/sessions/${sid}/graph?confirm=true`, { method: "DELETE" }),
 
   /** What the graph is not showing you, and why (R2.14). */
   review: (sid: number, limit = 100) =>

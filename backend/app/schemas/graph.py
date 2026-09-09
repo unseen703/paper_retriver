@@ -126,6 +126,18 @@ class StatsResponse(BaseModel):
     )
 
 
+class ClearGraphResponse(BaseModel):
+    """What a clear actually did (R2.15)."""
+
+    cleared: int = Field(
+        description=(
+            "Nodes removed from this session's graph. The corpus -- papers,"
+            " authors, edges, cached responses -- is untouched: that is what"
+            " the API budget bought, and it is shared across sessions."
+        )
+    )
+
+
 class ReviewPaperOut(BaseModel):
     """One row of the review drawer (R2.14)."""
 
@@ -243,6 +255,7 @@ class SavePositionsResponse(BaseModel):
 
 
 __all__ = [
+    "ClearGraphResponse",
     "GraphEdgeOut",
     "GraphMeta",
     "GraphNodeOut",

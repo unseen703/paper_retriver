@@ -44,14 +44,21 @@ _STATE_FOR = {
 }
 
 # Events that take a paper out of the graph entirely.
-_TOMBSTONES = ("REMOVED", "GC_SWEPT")
+#: Events after which a paper is no longer part of the graph.
+#:
+#: Deliberately *not* `events.TOMBSTONE_EVENTS`, which is a different question.
+#: That set answers "must expansion refuse to re-admit this?"; this one answers
+#: "is it in the graph right now?". `CLEARED` (R2.15) is in this set and not in
+#: that one: clearing means start over, not never show me these again, so a
+#: cleared paper is out of the graph and free to be found again.
+_LEAVES_THE_GRAPH = ("REMOVED", "GC_SWEPT", "CLEARED")
 
 
 def states_from_events(conn: Connection, session_id: int) -> dict[int, str]:
     """
     Derive each paper's graph state in this session from its event log alone.
 
-    Papers whose latest meaningful event is a tombstone are omitted rather than
+    Papers whose latest meaningful event removed them are omitted rather than
     given a state -- they are out of the graph, and the distinction between
     "absent" and "present with some state" is the whole tombstone mechanism.
 
@@ -69,7 +76,7 @@ def states_from_events(conn: Connection, session_id: int) -> dict[int, str]:
 
     derived: dict[int, str] = {}
     for paper_id, event_type in rows:
-        if event_type in _TOMBSTONES:
+        if event_type in _LEAVES_THE_GRAPH:
             derived.pop(paper_id, None)
             continue
         state = _STATE_FOR.get(event_type)

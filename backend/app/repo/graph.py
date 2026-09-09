@@ -289,6 +289,26 @@ def set_positions(
     return len(positions) if result.rowcount is None or result.rowcount < 0 else result.rowcount
 
 
+def clear_session(conn: Connection, session_id: int) -> int:
+    """
+    Drop every node in this session. Returns how many went (R2.15).
+
+    Only `graph_nodes`. `papers`, `authors`, `edges` and `api_cache` are what
+    the API budget bought -- shared across sessions, and not opinions. Deleting
+    them would turn "start this graph over" into "throw away every API call I
+    have ever made", which is not what anyone means by Clear.
+
+    The count is returned because silence after a destructive action is the
+    worst possible feedback: it cannot distinguish "cleared 40 papers" from
+    "did nothing at all".
+    """
+    result = conn.execute(
+        text("DELETE FROM graph_nodes WHERE session_id = :session_id"),
+        {"session_id": session_id},
+    )
+    return int(result.rowcount or 0)
+
+
 def count_by_state(conn: Connection, session_id: int) -> dict[str, int]:
     """Per-state counts for the stats panel (R2.13)."""
     rows = conn.execute(
@@ -303,6 +323,7 @@ def count_by_state(conn: Connection, session_id: int) -> dict[str, int]:
 
 __all__ = [
     "add_node",
+    "clear_session",
     "count_by_state",
     "get_node",
     "get_node_ids",

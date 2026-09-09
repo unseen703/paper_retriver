@@ -133,7 +133,23 @@ export interface paths {
         get: operations["get_graph_api_sessions__sid__graph_get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Clear Graph
+         * @description Empty this session's graph (R2.15).
+         *
+         *     **`confirm` is required and there is no default that fires.** A DELETE that
+         *     goes off on a stray click is a different feature from one that makes you
+         *     say what you mean, and the difference only shows up on the day you did not
+         *     mean it. `confirm=false` is refused too: a caller saying no should not be
+         *     read as a caller saying nothing.
+         *
+         *     Graph membership only. The corpus is what the API budget bought and it is
+         *     shared between sessions, so seeding the same papers again afterwards costs
+         *     nothing. The event log survives as well -- it is append-only and it is the
+         *     audit trail -- and a `CLEARED` event is appended, so the clear is recorded
+         *     rather than being the one action that leaves no trace.
+         */
+        delete: operations["clear_graph_api_sessions__sid__graph_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -304,6 +320,17 @@ export interface components {
              * @default false
              */
             force: boolean;
+        };
+        /**
+         * ClearGraphResponse
+         * @description What a clear actually did (R2.15).
+         */
+        ClearGraphResponse: {
+            /**
+             * Cleared
+             * @description Nodes removed from this session's graph. The corpus -- papers, authors, edges, cached responses -- is untouched: that is what the API budget bought, and it is shared across sessions.
+             */
+            cleared: number;
         };
         /**
          * ExpandRequest
@@ -1270,6 +1297,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GraphResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clear_graph_api_sessions__sid__graph_delete: {
+        parameters: {
+            query?: {
+                /** @description Must be true. Absent or false is a 400 -- see below. */
+                confirm?: boolean;
+            };
+            header?: never;
+            path: {
+                /** @description Session id. */
+                sid: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClearGraphResponse"];
                 };
             };
             /** @description Validation Error */
