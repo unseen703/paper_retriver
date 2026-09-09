@@ -22,6 +22,20 @@ The graph is built from SQL on each request rather than cached. PLAN.md's rule
 is "rebuilt from SQL on mutation", and at R2's ceiling of 2000 nodes the build
 is milliseconds -- a cache here would be an invalidation bug waiting for R2.15
 to clear the graph out from under it.
+
+**Every figure is derived from one node set, on purpose.** These reads are not
+one snapshot: pysqlite does not open a read transaction for a SELECT, so each
+query can observe a different committed state -- and `db.py` enables WAL
+precisely so the expansion worker can write while the API reads. An expansion
+is exactly when someone opens this panel.
+
+So consistency is built in rather than relied upon. The nodes, their states and
+their crawl states come from a single query, and the edge list is filtered to
+that node set before anything is measured. The result may be a few seconds
+stale; it will always describe a graph that actually existed. Left to itself,
+`nx.add_edges_from` creates any endpoint it has not seen, so an edge list from a
+newer snapshot silently grows the projection -- counting components over more
+nodes than `node_count` reports, and producing a density above 1.0.
 """
 
 from __future__ import annotations
@@ -32,7 +46,6 @@ import networkx as nx
 from sqlalchemy import Connection, text
 
 from app.models import NODE_STATES
-from app.repo import graph as graph_repo
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,25 +74,24 @@ def _internal_edges(conn: Connection, session_id: int) -> list[tuple[int, int]]:
     return [(int(citing), int(cited)) for citing, cited in rows]
 
 
-def _crawl_completeness(conn: Connection, session_id: int) -> float:
+def _nodes(conn: Connection, session_id: int) -> list[tuple[int, str, str]]:
     """
-    |non-stub| / |nodes|.
+    (paper_id, state, crawl_state) for every node here. **One query.**
 
-    PLAN.md section I: PageRank over a partially crawled graph is biased, so R3
-    suppresses that column below 0.6. This panel is where that number becomes
-    visible before it silently distorts a ranking.
+    One rather than two because everything downstream has to agree about which
+    nodes exist. Asking separately for the states and for the crawl states
+    invites the two answers to come from different moments, and then the
+    per-state rows and the completeness percentage describe different graphs.
     """
-    row = conn.execute(
+    rows = conn.execute(
         text(
-            "SELECT COUNT(*), SUM(CASE WHEN p.crawl_state != 'STUB' THEN 1 ELSE 0 END)"
+            "SELECT g.paper_id, g.state, p.crawl_state"
             " FROM graph_nodes g JOIN papers p ON p.id = g.paper_id"
             " WHERE g.session_id = :sid"
         ),
         {"sid": session_id},
-    ).fetchone()
-    if row is None or not row[0]:
-        return 0.0
-    return round(float(row[1] or 0) / float(row[0]), 4)
+    )
+    return [(int(pid), str(state), str(crawl)) for pid, state, crawl in rows]
 
 
 def compute_stats(conn: Connection, session_id: int) -> GraphStats:
@@ -91,21 +103,33 @@ def compute_stats(conn: Connection, session_id: int) -> GraphStats:
     one -- so an empty graph reports zeroes, which is the true answer rather
     than a fallback.
     """
-    by_state_ids = graph_repo.get_nodes_by_state(conn, session_id)
+    nodes = _nodes(conn, session_id)
+    node_ids = {pid for pid, _, _ in nodes}
+    node_count = len(node_ids)
+
     # Every state present with a count, including the ones at zero. A panel
     # should render its rows from the shape rather than from a special case,
     # and "nothing disliked yet" must be distinguishable from "this build
     # forgot to count them".
-    by_state = {state: len(by_state_ids.get(state, ())) for state in sorted(NODE_STATES)}
-
-    node_ids = {pid for ids in by_state_ids.values() for pid in ids}
-    node_count = len(node_ids)
-    edges = _internal_edges(conn, session_id)
+    by_state = dict.fromkeys(sorted(NODE_STATES), 0)
+    for _, state, _ in nodes:
+        # `setdefault` rather than assuming: a state outside NODE_STATES would
+        # otherwise be counted in node_count and appear in no row at all, so
+        # the panel's figures would quietly stop adding up.
+        by_state[state] = by_state.setdefault(state, 0) + 1
 
     # Annotated: nx.Graph is generic over its node type, and mypy cannot infer
     # int from `add_nodes_from` alone.
     projection: nx.Graph[int] = nx.Graph()
     projection.add_nodes_from(node_ids)
+    # Filtered to the node set above, because `add_edges_from` creates any
+    # endpoint it has not seen -- and an edge whose other end is not in this
+    # graph is not an edge of this graph either way. See the module docstring.
+    edges = [
+        (citing, cited)
+        for citing, cited in _internal_edges(conn, session_id)
+        if citing in node_ids and cited in node_ids
+    ]
     # nx.Graph collapses A->B and B->A into one edge, which is what "undirected
     # projection" means and what keeps a reciprocal citation pair from counting
     # twice in the density.
@@ -130,7 +154,15 @@ def compute_stats(conn: Connection, session_id: int) -> GraphStats:
         components=components,
         avg_degree=avg_degree,
         density=density,
-        crawl_completeness=_crawl_completeness(conn, session_id),
+        # From the same rows as everything else. PLAN.md section I: PageRank
+        # over a partially crawled graph is biased, and R3 suppresses that
+        # column below 0.6 -- this panel is where the number becomes visible
+        # before it silently distorts a ranking.
+        crawl_completeness=(
+            round(sum(1 for _, _, crawl in nodes if crawl != "STUB") / node_count, 4)
+            if node_count
+            else 0.0
+        ),
     )
 
 

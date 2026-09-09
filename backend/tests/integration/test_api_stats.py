@@ -323,3 +323,49 @@ def test_pagerank_is_absent_until_r3(client: TestClient, engine: Engine) -> None
     """
     Graph(engine).node("a")
     assert "pagerank" not in _stats(client)
+
+
+# --------------------------------------------------------------------------
+# Review finding: the three reads are not one snapshot
+# --------------------------------------------------------------------------
+
+
+def test_edges_arriving_from_a_newer_snapshot_do_not_invent_nodes(
+    engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    `compute_stats` runs three queries, and SQLite's pysqlite driver does not
+    open a read transaction for a SELECT -- so each one can observe a different
+    committed state. This is not hypothetical: `db.py` enables WAL precisely so
+    the expansion worker can write while the API reads, and an expansion is
+    exactly when someone opens this panel.
+
+    The sharp edge is `nx.add_edges_from`, which creates any endpoint it has
+    not seen. An edge list from a newer snapshot silently adds nodes to the
+    projection, so `components` gets counted over a larger graph than
+    `node_count` reports, and `avg_degree` becomes 2*newE/oldN -- a picture of a
+    graph that never existed.
+
+    Simulated by handing the edge query an endpoint the node query never
+    returned, which is precisely what a concurrent insert produces.
+    """
+    from app.services import stats as stats_service
+
+    graph = Graph(engine).node("A").node("B")
+    graph.edge("A", "B")
+    phantom = max(graph.ids.values()) + 999
+
+    real_edges = stats_service._internal_edges
+
+    def with_a_newer_edge(conn: object, session_id: int) -> list[tuple[int, int]]:
+        return [*real_edges(conn, session_id), (graph.ids["A"], phantom)]  # type: ignore[arg-type]
+
+    monkeypatch.setattr(stats_service, "_internal_edges", with_a_newer_edge)
+
+    with engine.connect() as conn:
+        result = stats_service.compute_stats(conn, SID)
+
+    assert result.node_count == 2
+    assert result.edge_count == 1, "an edge to a node outside the graph is not an edge of it"
+    assert result.components == 1, "components must be counted over the nodes actually reported"
+    assert result.avg_degree == 1.0, "2E/N over the same N that is reported"

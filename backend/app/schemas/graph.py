@@ -102,8 +102,20 @@ class StatsResponse(BaseModel):
         description="Every state, including the ones at zero, so a row is never missing."
     )
     components: int = Field(description="Connected pieces of the undirected projection.")
-    avg_degree: float = Field(description="2E/N -- each edge counts at both of its endpoints.")
-    density: float = Field(description="2E / (N(N-1)), against the undirected maximum.")
+    avg_degree: float = Field(
+        ge=0.0, description="2E/N -- each edge counts at both of its endpoints."
+    )
+    density: float = Field(
+        ge=0.0,
+        le=1.0,
+        description=(
+            "2E / (N(N-1)), against the undirected maximum. Bounded here on"
+            " purpose: a density above 1.0 is arithmetically impossible, so if"
+            " one is ever computed it means the edge count and the node count"
+            " came from different reads -- and a loud 500 beats shipping an"
+            " absurd number to a panel nobody would think to doubt."
+        ),
+    )
     crawl_completeness: float = Field(
         ge=0.0,
         le=1.0,
