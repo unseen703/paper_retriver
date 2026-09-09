@@ -13,6 +13,12 @@ dependencies = [
     "sqlalchemy>=2.0",
     "alembic>=1.14",
     "networkx>=3.4",
+    # NetworkX's pagerank is implemented over scipy/numpy arrays, so R3's
+    # first structural signal needs it. CLAUDE.md already commits to NumPy
+    # for R5's embeddings ("NumPy .npy + brute-force cosine"), so this is
+    # bringing forward a dependency the design already chose.
+    "numpy>=2.1",
+    "scipy>=1.14",
     "pyyaml>=6.0",
     "structlog>=24.4",
     "typer>=0.15",
