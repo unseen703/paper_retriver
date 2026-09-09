@@ -45,10 +45,15 @@ from app.schemas.graph import (
     GraphNodeOut,
     GraphResponse,
     Position,
+    ReasonCount,
+    ReviewBucketOut,
+    ReviewPaperOut,
+    ReviewResponse,
     SavePositionsRequest,
     SavePositionsResponse,
     StatsResponse,
 )
+from app.services.review import DEFAULT_LIMIT, MAX_LIMIT, ReviewBucket, build_review
 from app.services.stats import compute_stats
 
 logger = logging.getLogger(__name__)
@@ -217,6 +222,48 @@ def get_stats(
         avg_degree=stats.avg_degree,
         density=stats.density,
         crawl_completeness=stats.crawl_completeness,
+    )
+
+
+def _bucket(bucket: ReviewBucket) -> ReviewBucketOut:
+    return ReviewBucketOut(
+        total=bucket.total,
+        by_reason=[ReasonCount(reason_code=code, count=n) for code, n in bucket.by_reason],
+        papers=[
+            ReviewPaperOut(
+                paper_id=p.paper_id,
+                title=p.title,
+                reason_code=p.reason_code,
+                stage=p.stage,
+                year=p.year,
+            )
+            for p in bucket.papers
+        ],
+        truncated=bucket.truncated,
+    )
+
+
+@router.get("/{sid}/review", response_model=ReviewResponse)
+def get_review(
+    sid: Annotated[int, Depends(existing_session)],
+    engine: Annotated[Engine, Depends(get_engine)],
+    limit: Annotated[
+        int,
+        Query(ge=1, le=MAX_LIMIT, description="Rows per tab. Counts stay complete regardless."),
+    ] = DEFAULT_LIMIT,
+) -> ReviewResponse:
+    """
+    What the graph is not showing you, and why (R2.14).
+
+    PLAN.md M5: "A filter you cannot audit is a filter you cannot tune, and you
+    will silently discard good papers for weeks without noticing."
+    """
+    with engine.connect() as conn:
+        review = build_review(conn, sid, limit)
+    return ReviewResponse(
+        quarantined=_bucket(review["quarantined"]),
+        rejected=_bucket(review["rejected"]),
+        removed=_bucket(review["removed"]),
     )
 
 

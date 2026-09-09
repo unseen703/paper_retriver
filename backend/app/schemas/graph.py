@@ -126,6 +126,68 @@ class StatsResponse(BaseModel):
     )
 
 
+class ReviewPaperOut(BaseModel):
+    """One row of the review drawer (R2.14)."""
+
+    paper_id: int
+    title: str
+    reason_code: str = Field(
+        description=(
+            "Why it is absent. A filter reason for the Quarantined and Rejected"
+            " tabs; the event type (REMOVED | GC_SWEPT) for Removed."
+        )
+    )
+    stage: str = Field(
+        description=(
+            "Which filter stage decided, or for a removal the actor -- USER for"
+            " a removal you asked for, SYSTEM for one the sweep drew from it."
+        )
+    )
+    year: int | None = None
+
+
+class ReasonCount(BaseModel):
+    """How many papers one reason accounts for. Largest first."""
+
+    reason_code: str
+    count: int
+
+
+class ReviewBucketOut(BaseModel):
+    """
+    One tab.
+
+    `total` and `by_reason` are complete; `papers` is a capped sample. A mature
+    corpus rejects thousands of papers, and materialising all of them to render
+    a drawer would make this slowest exactly when the graph is interesting.
+    """
+
+    total: int
+    by_reason: list[ReasonCount] = Field(default_factory=list)
+    papers: list[ReviewPaperOut] = Field(default_factory=list)
+    truncated: bool = Field(
+        default=False,
+        description=(
+            "True when `papers` is a sample of `total`. Stated rather than left"
+            " for the client to infer from a suspiciously round number."
+        ),
+    )
+
+
+class ReviewResponse(BaseModel):
+    """
+    The three tabs, always all three (R2.14).
+
+    Three different kinds of absence. Quarantine is "probably applied ML but I
+    am not sure", which PLAN.md notes is most of the hard cases -- folding it
+    into Rejected would bury exactly the papers most worth a human glance.
+    """
+
+    quarantined: ReviewBucketOut
+    rejected: ReviewBucketOut
+    removed: ReviewBucketOut
+
+
 class NodePosition(BaseModel):
     """Where one node sits, as the client laid it out (R2.12)."""
 
@@ -187,6 +249,10 @@ __all__ = [
     "GraphResponse",
     "NodePosition",
     "Position",
+    "ReasonCount",
+    "ReviewBucketOut",
+    "ReviewPaperOut",
+    "ReviewResponse",
     "SavePositionsRequest",
     "SavePositionsResponse",
     "StatsResponse",

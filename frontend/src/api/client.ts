@@ -28,6 +28,9 @@ export type JobAccepted = components["schemas"]["JobAccepted"];
 export type JobStatus = components["schemas"]["JobStatus"];
 export type NodePosition = components["schemas"]["NodePosition"];
 export type StatsResponse = components["schemas"]["StatsResponse"];
+export type ReviewResponse = components["schemas"]["ReviewResponse"];
+export type ReviewBucketOut = components["schemas"]["ReviewBucketOut"];
+export type ReviewPaperOut = components["schemas"]["ReviewPaperOut"];
 export type HealthResponse = components["schemas"]["HealthResponse"];
 
 /**
@@ -128,6 +131,14 @@ export const api = {
    * as the whole -- a failure whose symptom is that everything looks fine.
    */
   stats: (sid: number) => request<StatsResponse>(`/api/sessions/${sid}/stats`),
+
+  /** What the graph is not showing you, and why (R2.14). */
+  review: (sid: number, limit = 100) =>
+    request<ReviewResponse>(`/api/sessions/${sid}/review?limit=${limit}`),
+
+  /** Bring a tombstoned paper back as a CANDIDATE (R2.8). */
+  restore: (sid: number, paperId: number) =>
+    request<NodeResponse>(`/api/sessions/${sid}/nodes/${paperId}/restore`, { method: "POST" }),
 
   expansion: (sid: number, jobId: number) =>
     request<JobStatus>(`/api/sessions/${sid}/expansions/${jobId}`),

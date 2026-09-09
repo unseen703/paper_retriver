@@ -9,6 +9,7 @@ import { ExpansionControls } from "./components/ExpansionControls";
 import { NodeInspector, type Neighbour } from "./components/NodeInspector";
 import { ViewControls } from "./components/ViewControls";
 import { StatsPanel } from "./components/StatsPanel";
+import { ReviewDrawer } from "./components/ReviewDrawer";
 import type { LabelMode } from "./components/stylesheet";
 import { clampThreshold, type SavedPosition } from "./components/graphInteraction";
 
@@ -33,6 +34,7 @@ export default function App() {
 
   const [showFixture, setShowFixture] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
   const [hoveredId, setHoveredId] = useState<number | null>(null);
   const [relayoutToken, setRelayoutToken] = useState(0);
   const [resetViewToken, setResetViewToken] = useState(0);
@@ -170,6 +172,17 @@ export default function App() {
             + Add paper
           </button>
           <ExpansionControls sessionId={sessionId} disabled={showFixture} />
+          {/* R2.14. The drawer is where a filter stops being a black box, so
+              it needs to be one click away rather than buried. */}
+          <button
+            type="button"
+            onClick={() => setReviewOpen((was) => !was)}
+            disabled={showFixture}
+            aria-expanded={reviewOpen}
+            title="What the filters set aside, and what you removed"
+          >
+            Review
+          </button>
           <button onClick={() => setRelayoutToken((t) => t + 1)} title="Re-run the layout">
             Tidy
           </button>
@@ -240,6 +253,16 @@ export default function App() {
         {/* The inspector is the detail query's only consumer now, so selecting
             a node fetches once and renders everything rather than fetching to
             show three author names in the footer. */}
+        {!showFixture && reviewOpen && (
+          <ReviewDrawer
+            sessionId={sessionId}
+            onClose={() => setReviewOpen(false)}
+            // Select the restored paper so the click is visibly not a no-op:
+            // the graph refetches and the node it brought back is highlighted.
+            onSelect={setSelected}
+          />
+        )}
+
         {!showFixture && selectedId != null && (
           <NodeInspector
             sessionId={sessionId}

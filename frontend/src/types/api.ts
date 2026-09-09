@@ -200,6 +200,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/{sid}/review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Review
+         * @description What the graph is not showing you, and why (R2.14).
+         *
+         *     PLAN.md M5: "A filter you cannot audit is a filter you cannot tune, and you
+         *     will silently discard good papers for weeks without noticing."
+         */
+        get: operations["get_review_api_sessions__sid__review_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/{sid}/expansions": {
         parameters: {
             query?: never;
@@ -734,6 +757,16 @@ export interface components {
             y: number;
         };
         /**
+         * ReasonCount
+         * @description How many papers one reason accounts for. Largest first.
+         */
+        ReasonCount: {
+            /** Reason Code */
+            reason_code: string;
+            /** Count */
+            count: number;
+        };
+        /**
          * RejectedResponse
          * @description The 422 body, wrapped in FastAPI's standard error envelope.
          *
@@ -798,6 +831,63 @@ export interface components {
             removed: number[];
             /** Gc Swept */
             gc_swept: number[];
+        };
+        /**
+         * ReviewBucketOut
+         * @description One tab.
+         *
+         *     `total` and `by_reason` are complete; `papers` is a capped sample. A mature
+         *     corpus rejects thousands of papers, and materialising all of them to render
+         *     a drawer would make this slowest exactly when the graph is interesting.
+         */
+        ReviewBucketOut: {
+            /** Total */
+            total: number;
+            /** By Reason */
+            by_reason?: components["schemas"]["ReasonCount"][];
+            /** Papers */
+            papers?: components["schemas"]["ReviewPaperOut"][];
+            /**
+             * Truncated
+             * @description True when `papers` is a sample of `total`. Stated rather than left for the client to infer from a suspiciously round number.
+             * @default false
+             */
+            truncated: boolean;
+        };
+        /**
+         * ReviewPaperOut
+         * @description One row of the review drawer (R2.14).
+         */
+        ReviewPaperOut: {
+            /** Paper Id */
+            paper_id: number;
+            /** Title */
+            title: string;
+            /**
+             * Reason Code
+             * @description Why it is absent. A filter reason for the Quarantined and Rejected tabs; the event type (REMOVED | GC_SWEPT) for Removed.
+             */
+            reason_code: string;
+            /**
+             * Stage
+             * @description Which filter stage decided, or for a removal the actor -- USER for a removal you asked for, SYSTEM for one the sweep drew from it.
+             */
+            stage: string;
+            /** Year */
+            year?: number | null;
+        };
+        /**
+         * ReviewResponse
+         * @description The three tabs, always all three (R2.14).
+         *
+         *     Three different kinds of absence. Quarantine is "probably applied ML but I
+         *     am not sure", which PLAN.md notes is most of the hard cases -- folding it
+         *     into Rejected would bury exactly the papers most worth a human glance.
+         */
+        ReviewResponse: {
+            quarantined: components["schemas"]["ReviewBucketOut"];
+            rejected: components["schemas"]["ReviewBucketOut"];
+            removed: components["schemas"]["ReviewBucketOut"];
         };
         /**
          * SavePositionsRequest
@@ -889,7 +979,7 @@ export interface components {
             avg_degree: number;
             /**
              * Density
-             * @description 2E / (N(N-1)), against the undirected maximum.
+             * @description 2E / (N(N-1)), against the undirected maximum. Bounded here on purpose: a density above 1.0 is arithmetically impossible, so if one is ever computed it means the edge count and the node count came from different reads -- and a loud 500 beats shipping an absurd number to a panel nobody would think to doubt.
              */
             density: number;
             /**
@@ -1248,6 +1338,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StatsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_review_api_sessions__sid__review_get: {
+        parameters: {
+            query?: {
+                /** @description Rows per tab. Counts stay complete regardless. */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Session id. */
+                sid: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewResponse"];
                 };
             };
             /** @description Validation Error */
