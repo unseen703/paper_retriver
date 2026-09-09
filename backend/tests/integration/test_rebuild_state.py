@@ -193,8 +193,23 @@ def test_rebuild_matches_after_twenty_mixed_labels(engine: Engine, client: TestC
     This is the test that makes "the log is the source of truth" a fact rather
     than a claim.
     """
+    seed = _seed_node(engine, "seed", "SEED")
     papers = [_seed_node(engine, f"p{i}") for i in range(10)]
-    _seed_node(engine, "seed", "SEED")
+    # Every candidate cites the seed. Without edges the graph is ten
+    # disconnected candidates, and the first un-like -- which costs the graph
+    # an anchor and triggers R2.5's sweep -- collects all of them, so the next
+    # PATCH gets a 404. That is the sweep working correctly against a fixture
+    # that could not occur: expansion only ever creates a candidate alongside
+    # the edge that justifies it.
+    with engine.begin() as conn:
+        for paper_id in papers:
+            conn.execute(
+                text(
+                    "INSERT INTO edges (citing_id, cited_id, discovered_via, first_seen_at)"
+                    " VALUES (:a, :b, 'BACKWARD', '2026-01-01')"
+                ),
+                {"a": paper_id, "b": seed},
+            )
 
     plan = ["LIKED", "DISLIKED", "CANDIDATE", "LIKED", "DISLIKED"]
     applied = 0
@@ -253,3 +268,30 @@ def test_rebuild_leaves_a_node_with_no_events_alone(engine: Engine) -> None:
     paper_id = _seed_node(engine, "a")
     assert rebuild_states(engine, SID) == 0
     assert _live_states(engine)[paper_id] == "CANDIDATE"
+
+
+def test_a_swept_node_stays_swept_through_a_rebuild(engine: Engine, client: TestClient) -> None:
+    """
+    The interaction between R2.3 and R2.5. A node the sweep collected carries a
+    GC_SWEPT tombstone, so the rebuild must leave it out rather than derive a
+    state for it -- otherwise the safety net would resurrect exactly what the
+    sweep removed.
+    """
+    liked = _seed_node(engine, "L", "LIKED")
+    orphan = _seed_node(engine, "C")
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO edges (citing_id, cited_id, discovered_via, first_seen_at)"
+                " VALUES (:a, :b, 'BACKWARD', '2026-01-01')"
+            ),
+            {"a": orphan, "b": liked},
+        )
+
+    client.patch(f"/api/sessions/{SID}/nodes/{liked}", json={"state": "CANDIDATE"})
+
+    with engine.connect() as conn:
+        derived = states_from_events(conn, SID)
+    assert orphan not in derived, "a swept node has no graph state to derive"
+    assert derived[liked] == "CANDIDATE", "the un-liked node is protected and keeps its state"
+    assert rebuild_states(engine, SID) == 0, "the projection already agrees with the log"
