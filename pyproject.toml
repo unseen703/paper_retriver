@@ -25,6 +25,8 @@ dev = [
     "ruff>=0.8",
     "mypy>=1.13",
     "types-PyYAML>=6.0",
+    # R2.13 is the first use of NetworkX, which ships no stubs of its own.
+    "types-networkx>=3.4",
 ]
 
 [build-system]

@@ -8,6 +8,7 @@ import { AddPaperDialog } from "./components/AddPaperDialog";
 import { ExpansionControls } from "./components/ExpansionControls";
 import { NodeInspector, type Neighbour } from "./components/NodeInspector";
 import { ViewControls } from "./components/ViewControls";
+import { StatsPanel } from "./components/StatsPanel";
 import type { LabelMode } from "./components/stylesheet";
 import { clampThreshold, type SavedPosition } from "./components/graphInteraction";
 
@@ -227,6 +228,13 @@ export default function App() {
         />
 
           <p style={hintStyle}>drag to move · scroll to zoom · hover to trace · click to inspect</p>
+
+          {/* R2.13. Bottom-left, opposite the hint and clear of the inspector,
+              which opens on the right. It is a reference readout rather than a
+              control, so it sits out of the way rather than in the toolbar. */}
+          <div style={statsAnchorStyle}>
+            <StatsPanel sessionId={sessionId} disabled={showFixture} />
+          </div>
         </div>
 
         {/* The inspector is the detail query's only consumer now, so selecting
@@ -353,6 +361,19 @@ const footerStyle: React.CSSProperties = {
   whiteSpace: "nowrap",
   overflow: "hidden",
   textOverflow: "ellipsis",
+};
+
+const statsAnchorStyle: React.CSSProperties = {
+  position: "absolute",
+  left: 12,
+  bottom: 34,
+  padding: "8px 10px",
+  borderRadius: 6,
+  // Same translucent slate as the other floating chrome, so the panel reads as
+  // part of the canvas furniture rather than a card dropped on top of it.
+  background: "rgba(26, 32, 44, 0.82)",
+  border: "1px solid var(--line, #2d3748)",
+  pointerEvents: "auto",
 };
 
 const hintStyle: React.CSSProperties = {

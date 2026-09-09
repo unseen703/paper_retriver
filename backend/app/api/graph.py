@@ -47,7 +47,9 @@ from app.schemas.graph import (
     Position,
     SavePositionsRequest,
     SavePositionsResponse,
+    StatsResponse,
 )
+from app.services.stats import compute_stats
 
 logger = logging.getLogger(__name__)
 
@@ -189,6 +191,33 @@ def save_positions(
             saved,
         )
     return SavePositionsResponse(saved=saved)
+
+
+@router.get("/{sid}/stats", response_model=StatsResponse)
+def get_stats(
+    sid: Annotated[int, Depends(existing_session)],
+    engine: Annotated[Engine, Depends(get_engine)],
+) -> StatsResponse:
+    """
+    What is actually in this session's graph (R2.13).
+
+    A server endpoint rather than arithmetic in the panel, because BUILD.md's
+    verification is "counts match the DB". `GET /graph` can be filtered by
+    state, and a panel totalling a filtered response would confidently report a
+    subset as the whole -- a failure whose symptom is that everything looks
+    fine.
+    """
+    with engine.connect() as conn:
+        stats = compute_stats(conn, sid)
+    return StatsResponse(
+        node_count=stats.node_count,
+        edge_count=stats.edge_count,
+        by_state=stats.by_state,
+        components=stats.components,
+        avg_degree=stats.avg_degree,
+        density=stats.density,
+        crawl_completeness=stats.crawl_completeness,
+    )
 
 
 __all__ = ["router"]

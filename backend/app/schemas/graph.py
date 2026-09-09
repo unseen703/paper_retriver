@@ -81,6 +81,39 @@ class GraphResponse(BaseModel):
     meta: GraphMeta
 
 
+class StatsResponse(BaseModel):
+    """
+    `<StatsPanel>` v1 (R2.13).
+
+    Deliberately no `pagerank`. BUILD.md defers it to R3, and a field that
+    exists and is always null invites a panel to render an empty row for a
+    metric nobody has computed -- the shape should say what is available.
+    """
+
+    node_count: int
+    edge_count: int = Field(
+        description=(
+            "Edges with both endpoints in this graph. An edge into a boundary"
+            " paper is real and structurally useful, but the panel sits beside"
+            " a picture that does not draw it."
+        )
+    )
+    by_state: dict[str, int] = Field(
+        description="Every state, including the ones at zero, so a row is never missing."
+    )
+    components: int = Field(description="Connected pieces of the undirected projection.")
+    avg_degree: float = Field(description="2E/N -- each edge counts at both of its endpoints.")
+    density: float = Field(description="2E / (N(N-1)), against the undirected maximum.")
+    crawl_completeness: float = Field(
+        ge=0.0,
+        le=1.0,
+        description=(
+            "|non-stub| / |nodes|. PLAN.md section I: PageRank over a partially"
+            " crawled graph is biased, and R3 suppresses that column below 0.6."
+        ),
+    )
+
+
 class NodePosition(BaseModel):
     """Where one node sits, as the client laid it out (R2.12)."""
 
@@ -144,4 +177,5 @@ __all__ = [
     "Position",
     "SavePositionsRequest",
     "SavePositionsResponse",
+    "StatsResponse",
 ]

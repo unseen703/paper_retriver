@@ -55,6 +55,10 @@ export function ExpansionControls({ sessionId, disabled }: ExpansionControlsProp
     onSuccess: (data) => {
       setResult(data);
       queryClient.invalidateQueries({ queryKey: ["graph", sessionId] });
+      // R2.13: the panel counts the graph, so it is stale the moment the
+      // graph changes. Refetched rather than adjusted locally -- the whole
+      // point of the endpoint is that the server does the counting.
+      queryClient.invalidateQueries({ queryKey: ["stats", sessionId] });
       queryClient.invalidateQueries({ queryKey: ["health"] });
       // Flags on any open search list are stale the moment nodes are added.
       queryClient.invalidateQueries({ queryKey: ["search", sessionId] });

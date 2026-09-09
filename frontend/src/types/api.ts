@@ -174,6 +174,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/{sid}/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Stats
+         * @description What is actually in this session's graph (R2.13).
+         *
+         *     A server endpoint rather than arithmetic in the panel, because BUILD.md's
+         *     verification is "counts match the DB". `GET /graph` can be filtered by
+         *     state, and a panel totalling a filtered response would confidently report a
+         *     subset as the whole -- a failure whose symptom is that everything looks
+         *     fine.
+         */
+        get: operations["get_stats_api_sessions__sid__stats_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/{sid}/expansions": {
         parameters: {
             query?: never;
@@ -829,6 +855,50 @@ export interface components {
             previously_removed: boolean;
         };
         /**
+         * StatsResponse
+         * @description `<StatsPanel>` v1 (R2.13).
+         *
+         *     Deliberately no `pagerank`. BUILD.md defers it to R3, and a field that
+         *     exists and is always null invites a panel to render an empty row for a
+         *     metric nobody has computed -- the shape should say what is available.
+         */
+        StatsResponse: {
+            /** Node Count */
+            node_count: number;
+            /**
+             * Edge Count
+             * @description Edges with both endpoints in this graph. An edge into a boundary paper is real and structurally useful, but the panel sits beside a picture that does not draw it.
+             */
+            edge_count: number;
+            /**
+             * By State
+             * @description Every state, including the ones at zero, so a row is never missing.
+             */
+            by_state: {
+                [key: string]: number;
+            };
+            /**
+             * Components
+             * @description Connected pieces of the undirected projection.
+             */
+            components: number;
+            /**
+             * Avg Degree
+             * @description 2E/N -- each edge counts at both of its endpoints.
+             */
+            avg_degree: number;
+            /**
+             * Density
+             * @description 2E / (N(N-1)), against the undirected maximum.
+             */
+            density: number;
+            /**
+             * Crawl Completeness
+             * @description |non-stub| / |nodes|. PLAN.md section I: PageRank over a partially crawled graph is biased, and R3 suppresses that column below 0.6.
+             */
+            crawl_completeness: number;
+        };
+        /**
          * TransitionRefusedDetail
          * @description Why the state machine refused, in the shape the UI branches on.
          */
@@ -1146,6 +1216,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SavePositionsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_stats_api_sessions__sid__stats_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session id. */
+                sid: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatsResponse"];
                 };
             };
             /** @description Validation Error */
