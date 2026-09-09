@@ -26,6 +26,7 @@ is the failure people actually hit.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -42,11 +43,12 @@ from app.api.nodes import router as nodes_router
 from app.api.search import router as search_router
 from app.clients.cache import ResponseCache
 from app.clients.s2 import S2Client
-from app.config import filters, settings
+from app.config import filters, ranking, settings
 from app.db import db_url as default_db_url
 from app.db import make_engine
 from app.logging_setup import bind_session, configure_logging
 from app.schemas.health import HealthResponse
+from app.services.jobs import JobWorker
 
 logger = logging.getLogger(__name__)
 
@@ -86,11 +88,41 @@ def create_app(db_url: str | None = None) -> FastAPI:
         # its own token bucket -- turning 1 req/sec into 1 req/sec *each*.
         key = settings.s2_api_key.get_secret_value() if settings.s2_api_key else None
         client = S2Client(cache=ResponseCache(engine), api_key=key, rate=settings.s2_rate_limit)
-        deps.set_runtime(engine, client)
+
+        def worker_client() -> S2Client:
+            """
+            Resolve the S2 client the way a request would, override included.
+
+            The worker runs outside FastAPI's dependency injection, so a test
+            that swaps in `CachedOnlyS2Client` through `dependency_overrides`
+            would otherwise leave background expansions as the one place in the
+            process still able to open a socket. Consulting the same override
+            table keeps "the tests cannot reach the network" structural rather
+            than a thing to remember.
+            """
+            override = _app.dependency_overrides.get(deps.get_s2_client)
+            return override() if override is not None else client
+
+        # The worker hands its coroutines back to *this* loop rather than
+        # running its own: the client owns an httpx pool bound to the loop it
+        # was built on, and a second client would mean a second token bucket.
+        worker = JobWorker(
+            engine,
+            worker_client,
+            filters,
+            ranking,
+            asyncio.get_running_loop(),
+        )
+        deps.set_runtime(engine, client, worker)
+        worker.start()
         logger.info("api_startup config_version=%s", filters.config_version)
         try:
             yield
         finally:
+            # Stop the worker first: it writes to the engine, so disposing the
+            # engine underneath a running job would fail the job for a reason
+            # that has nothing to do with the job.
+            worker.stop()
             await client.aclose()
             engine.dispose()
             deps.clear_runtime()

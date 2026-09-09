@@ -78,8 +78,17 @@ async def expand(
     filters_cfg: FiltersConfig,
     ranking_cfg: RankingConfig,
     as_of_year: int,
+    expansion_id: int | None = None,
 ) -> ExpansionResult:
-    """Run one expansion for `session_id`. Never raises on budget exhaustion."""
+    """
+    Run one expansion for `session_id`. Never raises on budget exhaustion.
+
+    `expansion_id` names a row that already exists -- R2.4's worker creates it
+    QUEUED at the moment of the request and flips it to RUNNING when it claims
+    it, so the id is answerable in the 202 long before this function starts.
+    Called without one (the CLI, and every direct test), this opens its own
+    row exactly as it always did.
+    """
     result = ExpansionResult()
     # One resolver for the run: enrich() is a single bulk query per batch.
     resolver = CategoryResolver(engine)
@@ -87,7 +96,7 @@ async def expand(
     hits_at_start = client.cache_hits
 
     with engine.begin() as conn:
-        result.expansion_id = expansions_repo.start(
+        result.expansion_id = expansion_id or expansions_repo.start(
             conn, session_id, asdict(params), filters_cfg.config_version
         )
         # (1) Frontier: seeds and likes. Candidates are never expanded from --
@@ -169,12 +178,22 @@ async def expand(
         if result.truncated:
             break
 
+    # The fetch is over, so what it cost is known and worth writing down before
+    # the next stage starts. R2.4's poll derives its stage from which counters
+    # are filled in, and this is what moves a job off FETCHING -- without it a
+    # run would sit on one stage until it finished, which is a progress bar
+    # that only ever reads 0% and then 100%.
+    _record(engine, session_id, result, n_filtered=result.ingest.boundary)
+
     # (3)-(6) Pool, exclude, prescore. Ingest already ran the cascade, so
     # everything reachable here has been filtered.
     with engine.begin() as conn:
         pool = build_pool(conn, session_id, anchors, filters_cfg, as_of_year)
         result.n_pool = len(pool)
         result.n_filtered = result.ingest.boundary
+        expansions_repo.record_progress(
+            conn, session_id, result.expansion_id or 0, n_pool=result.n_pool
+        )
 
         # (9)-(10) Rank by prescore, then allocate. R1 uses prescore as the
         # final ranking; real features arrive at R3.
@@ -201,10 +220,23 @@ async def expand(
             )
         result.added_paper_ids = sorted(entry.paper_id for entry, _ in selected)
         result.n_added = len(selected)
+        expansions_repo.record_progress(
+            conn, session_id, result.expansion_id or 0, n_added=result.n_added
+        )
 
     result.api_calls = client.api_calls - calls_at_start
     result.cache_hits = client.cache_hits - hits_at_start
     return _finish(engine, session_id, result, None)
+
+
+def _record(
+    engine: Engine, session_id: int, result: ExpansionResult, **counters: int | None
+) -> None:
+    """Write mid-run counters in their own transaction, if this run has a row."""
+    if result.expansion_id is None:
+        return
+    with engine.begin() as conn:
+        expansions_repo.record_progress(conn, session_id, result.expansion_id, **counters)
 
 
 def _finish(

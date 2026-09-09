@@ -14,6 +14,9 @@ import type { components } from "../types/api";
 // configurable to a LAN address by accident.
 export const API_BASE = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8000";
 
+/** PLAN.md: "Frontend polls GET /expansions/{id} every 1s". */
+export const POLL_INTERVAL_MS = 1000;
+
 export type SearchHit = components["schemas"]["SearchHit"];
 export type GraphResponse = components["schemas"]["GraphResponse"];
 export type GraphNodeOut = components["schemas"]["GraphNodeOut"];
@@ -21,6 +24,9 @@ export type GraphEdgeOut = components["schemas"]["GraphEdgeOut"];
 export type NodeDetail = components["schemas"]["NodeDetail"];
 export type NodeResponse = components["schemas"]["NodeResponse"];
 export type ExpandResponse = components["schemas"]["ExpandResponse"];
+export type JobAccepted = components["schemas"]["JobAccepted"];
+export type JobStatus = components["schemas"]["JobStatus"];
+export type NodePosition = components["schemas"]["NodePosition"];
 export type HealthResponse = components["schemas"]["HealthResponse"];
 
 /**
@@ -88,9 +94,60 @@ export const api = {
       body: JSON.stringify({ s2_paper_id: s2PaperId, force }),
     }),
 
-  expand: (sid: number, maxNew = 20) =>
-    request<ExpandResponse>(`/api/sessions/${sid}/expansions`, {
+  /**
+   * Queue an expansion (R2.4). Returns the job id to poll -- the work has not
+   * started yet, so there is nothing else true to report.
+   *
+   * A 409 means this session already has one in flight, and its `detail`
+   * carries that job's id so a caller that lost track can poll it instead.
+   */
+  queueExpansion: (sid: number, maxNew = 20) =>
+    request<JobAccepted>(`/api/sessions/${sid}/expansions`, {
       method: "POST",
       body: JSON.stringify({ hops: 1, max_new: maxNew }),
     }),
+
+  /**
+   * Persist the current arrangement (R2.12).
+   *
+   * PUT because saving the same layout twice is the same layout, and this is
+   * called after every settled layout and every drag.
+   */
+  savePositions: (sid: number, positions: NodePosition[]) =>
+    request<{ saved: number }>(`/api/sessions/${sid}/positions`, {
+      method: "PUT",
+      body: JSON.stringify({ positions }),
+    }),
+
+  expansion: (sid: number, jobId: number) =>
+    request<JobStatus>(`/api/sessions/${sid}/expansions/${jobId}`),
+
+  /**
+   * Queue an expansion and resolve when it finishes.
+   *
+   * `onProgress` is called with each poll, which is what R2.9's progress UI
+   * subscribes to. Kept here rather than in the component so that the polling
+   * interval, the terminal-status set and the abort path live next to the two
+   * requests they coordinate.
+   *
+   * Polling stops on any status that is not QUEUED or RUNNING -- checking for
+   * the terminal states rather than for "DONE" means a FAILED job ends the
+   * loop instead of spinning until the timeout.
+   */
+  expandAndWait: async (
+    sid: number,
+    maxNew = 20,
+    onProgress?: (status: JobStatus) => void,
+    signal?: AbortSignal,
+  ): Promise<JobStatus> => {
+    const { job_id } = await api.queueExpansion(sid, maxNew);
+    for (;;) {
+      if (signal?.aborted) throw new DOMException("aborted", "AbortError");
+      const status = await api.expansion(sid, job_id);
+      onProgress?.(status);
+      if (status.status !== "QUEUED" && status.status !== "RUNNING") return status;
+      // PLAN.md: "Frontend polls GET /expansions/{id} every 1s".
+      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+    }
+  },
 };

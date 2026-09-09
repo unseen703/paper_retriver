@@ -16,7 +16,8 @@
  */
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ApiError, api, type ExpandResponse } from "../api/client";
+import { ApiError, api, type ExpandResponse, type JobStatus } from "../api/client";
+import { ExpansionProgress } from "./ExpansionProgress";
 
 // The server enforces 1..100; matching it here means the spinner never starts
 // on a request that is going to come back 422.
@@ -32,8 +33,25 @@ export function ExpansionControls({ sessionId, disabled }: ExpansionControlsProp
   const [maxNew, setMaxNew] = useState(20);
   const [result, setResult] = useState<ExpandResponse | null>(null);
 
+  // R2.4 made expansion a job: POST returns 202 with an id, and the result
+  // arrives by polling. `expandAndWait` hides the loop, so this component
+  // still reads as one call; R2.9 will surface the intermediate stages it
+  // already receives through `onProgress`.
+  // R2.9: every poll lands here, so the row below shows the run advancing
+  // rather than only its beginning and its end.
+  const [progress, setProgress] = useState<JobStatus | null>(null);
+
   const expand = useMutation({
-    mutationFn: () => api.expand(sessionId, maxNew),
+    mutationFn: async () => {
+      const status = await api.expandAndWait(sessionId, maxNew, setProgress);
+      if (status.status !== "DONE") {
+        // A FAILED job is an error here even though the HTTP calls all
+        // succeeded -- otherwise the button would report success for a run
+        // that did nothing.
+        throw new Error(status.error ?? "The expansion did not finish.");
+      }
+      return status.result ?? null;
+    },
     onSuccess: (data) => {
       setResult(data);
       queryClient.invalidateQueries({ queryKey: ["graph", sessionId] });
@@ -42,6 +60,10 @@ export function ExpansionControls({ sessionId, disabled }: ExpansionControlsProp
       queryClient.invalidateQueries({ queryKey: ["search", sessionId] });
     },
     onError: () => setResult(null),
+    // The stage row is about a run in flight. Leaving the last one on screen
+    // after a failure would show "adding to graph" beside an error saying
+    // nothing was added.
+    onSettled: () => setProgress(null),
   });
 
   const errorMessage = (() => {
@@ -50,6 +72,10 @@ export function ExpansionControls({ sessionId, disabled }: ExpansionControlsProp
     if (error instanceof ApiError && error.status === 422) {
       // The graph is full. The detail names the ceiling, which is actionable.
       return String(error.detail ?? "Graph is at its node limit.");
+    }
+    if (error instanceof ApiError && error.status === 409) {
+      // One expansion per session. The detail carries the running job's id.
+      return "An expansion is already running for this session.";
     }
     if (error instanceof ApiError && error.status === 503) {
       return "Semantic Scholar is unavailable. Nothing was added.";
@@ -80,11 +106,17 @@ export function ExpansionControls({ sessionId, disabled }: ExpansionControlsProp
         {expand.isPending ? "Expanding…" : "Expand"}
       </button>
 
-      {expand.isPending && (
-        <span style={{ fontSize: 12, color: "var(--dim)" }} role="status">
-          fetching neighbours — this can take a minute
-        </span>
-      )}
+      {/* R2.9 replaces the old static "this can take a minute" with what the
+          run is actually doing. The fallback covers the gap between the click
+          and the first poll, which would otherwise show nothing at all. */}
+      {expand.isPending &&
+        (progress ? (
+          <ExpansionProgress status={progress} />
+        ) : (
+          <span style={{ fontSize: 12, color: "var(--dim)" }} role="status">
+            queueing…
+          </span>
+        ))}
 
       {errorMessage && (
         <span style={{ fontSize: 12, color: "salmon" }} role="status">

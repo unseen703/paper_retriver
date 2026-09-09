@@ -161,6 +161,39 @@ def removed_among(conn: Connection, session_id: int, paper_ids: list[int]) -> se
     return found
 
 
+def user_held_paper_ids(conn: Connection, session_id: int) -> set[int]:
+    """
+    Papers whose most recent event the **user** authored.
+
+    The sweep's exemption set. `graph_nodes.state` records what a paper is now;
+    this records whether the user put it in that position, which is a different
+    question and the one that decides whether an automatic process may take it
+    away.
+
+    Un-liking writes `UNLABELED`; restoring writes `RESTORED`. Both leave a
+    paper an ordinary CANDIDATE that topology alone would collect, and
+    collecting it would silently reverse the action that produced it. An
+    expansion's candidates have no events at all, so they stay sweepable --
+    which is the whole point of the sweep.
+
+    Derived per paper via the same correlated max(id) as `removed_paper_ids`,
+    for the same reason: nothing is stored, so the answer follows the log.
+    """
+    rows = conn.execute(
+        text(
+            "SELECT e.paper_id FROM interaction_events e"
+            " WHERE e.session_id = :session_id"
+            "   AND e.actor = 'USER'"
+            "   AND e.id = ("
+            "     SELECT MAX(inner_e.id) FROM interaction_events inner_e"
+            "     WHERE inner_e.session_id = e.session_id AND inner_e.paper_id = e.paper_id"
+            "   )"
+        ),
+        {"session_id": session_id},
+    )
+    return {row[0] for row in rows}
+
+
 def removed_paper_ids(conn: Connection, session_id: int) -> set[int]:
     """
     Papers whose latest event is a tombstone.
@@ -195,4 +228,5 @@ __all__ = [
     "latest_state",
     "removed_among",
     "removed_paper_ids",
+    "user_held_paper_ids",
 ]
