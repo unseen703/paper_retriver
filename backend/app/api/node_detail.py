@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Path
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from sqlalchemy import Engine
 
 from app.api.deps import existing_session, get_engine
@@ -41,9 +41,14 @@ from app.schemas.nodes import (
     LabelResponse,
     NodeDetail,
     NodeResponse,
+    RemovalCandidate,
+    RemovalPreview,
+    RemovalResult,
     TransitionRefusedDetail,
 )
 from app.services.labelling import NodeNotInSession, apply_label
+from app.services.removal import NodeNotInSession as RemovalTargetMissing
+from app.services.removal import NotRemoved, remove_node, restore_node
 from app.services.transitions import TransitionError
 
 router = APIRouter(prefix="/api/sessions", tags=["nodes"])
@@ -166,6 +171,79 @@ def label_node(
             year=paper.year,
         ),
         rescored_count=result.rescored_count,
+    )
+
+
+@router.delete("/{sid}/nodes/{paper_id}", response_model=RemovalPreview | RemovalResult)
+def delete_node(
+    sid: Annotated[int, Depends(existing_session)],
+    paper_id: Annotated[int, Path(ge=1, description="Local paper id.")],
+    engine: Annotated[Engine, Depends(get_engine)],
+    dry_run: Annotated[
+        bool,
+        Query(description="Preview only. Defaults to true -- PLAN.md: always call first."),
+    ] = True,
+) -> RemovalPreview | RemovalResult:
+    """
+    Remove one node, and whatever it was the only justification for (R2.6).
+
+    `dry_run` defaults to **true**: the safe reading of an omitted parameter is
+    the one that does not destroy anything. The preview runs the identical
+    computation inside a rolled-back transaction, so its count is what actually
+    happens rather than a second implementation free to disagree.
+
+    Removal takes graph membership only. The paper and its edges stay in the
+    corpus, still coupling everything that cites them.
+    """
+    try:
+        plan = remove_node(engine, sid, paper_id, dry_run=dry_run)
+    except RemovalTargetMissing as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    if dry_run:
+        return RemovalPreview(
+            would_remove=[
+                RemovalCandidate(id=pid, title=plan.titles.get(pid, str(pid)))
+                for pid in (*plan.removed, *plan.gc_swept)
+            ],
+            count=plan.count,
+        )
+    return RemovalResult(removed=list(plan.removed), gc_swept=list(plan.gc_swept))
+
+
+@router.post("/{sid}/nodes/{paper_id}/restore", response_model=NodeResponse)
+def restore(
+    sid: Annotated[int, Depends(existing_session)],
+    paper_id: Annotated[int, Path(ge=1, description="Local paper id.")],
+    engine: Annotated[Engine, Depends(get_engine)],
+) -> NodeResponse:
+    """
+    Bring a tombstoned paper back (R2.8).
+
+    The only path back, and never automatic -- expansion must not rediscover
+    something you removed on purpose. It returns as CANDIDATE rather than to
+    whatever label it had: that label was part of a judgment you reversed by
+    removing it, and restoring it silently would put words in your mouth.
+    """
+    try:
+        restore_node(engine, sid, paper_id)
+    except RemovalTargetMissing as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except NotRemoved as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    with engine.connect() as conn:
+        node = graph_repo.get_node(conn, sid, paper_id)
+        (paper,) = papers_repo.get_papers_by_ids(conn, [paper_id])
+    assert node is not None
+    return NodeResponse(
+        session_id=sid,
+        paper_id=paper_id,
+        state=node.state,
+        depth=node.depth,
+        title=paper.title,
+        score=node.score,
+        year=paper.year,
     )
 
 
