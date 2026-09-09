@@ -463,3 +463,58 @@ def test_a_missing_database_does_not_stop_the_app_from_starting(tmp_path: Path) 
     with TestClient(application) as client:
         assert client.get("/api/health").status_code == 200
         assert client.get("/api/health").json()["db"].startswith("error")
+
+
+# --------------------------------------------------------------------------
+# Review findings on R2.4 itself
+# --------------------------------------------------------------------------
+
+
+def test_a_run_with_no_anchors_is_not_reported_as_truncated(
+    env: tuple[TestClient, Engine],
+) -> None:
+    """
+    `truncated` is derived from the row, because no column holds it -- and the
+    first version derived it as "does `error` have anything in it", which is
+    wrong for the one case that sets `error` without stopping early.
+
+    A session with no seeds has nothing to expand from. That run did not run
+    out of anything; there was nothing to run out of. Calling it truncated
+    invites the user to raise a budget that was never the constraint.
+    """
+    client, _ = env  # deliberately not seeded
+    job_id = _queue(client).json()["job_id"]
+    body = _await_done(client, job_id)
+    assert body["status"] == "DONE"
+    assert body["result"]["error"]  # the reason is still reported
+    assert body["result"]["truncated"] is False
+
+
+def test_the_worker_survives_a_job_that_explodes(env: tuple[TestClient, Engine]) -> None:
+    """
+    A worker thread that dies takes every later job with it: they sit QUEUED
+    forever, and their sessions stay blocked on a 409 for work nothing is
+    doing. `_execute` was called outside the loop's `try`, and its own error
+    handler writes to the database -- so a failure there escaped and ended the
+    thread.
+
+    Provoked by making the run itself raise, then checking that a perfectly
+    ordinary job queued afterwards still completes.
+    """
+    client, _ = env
+    _seed(client)
+    from app.api import deps
+
+    live = deps.get_worker()
+    original = live._client_factory
+
+    def exploding() -> Any:
+        raise RuntimeError("boom")
+
+    live._client_factory = exploding  # type: ignore[assignment]
+    first = _queue(client).json()["job_id"]
+    assert _await_done(client, first)["status"] == "FAILED"
+
+    live._client_factory = original  # type: ignore[assignment]
+    second = _queue(client).json()["job_id"]
+    assert _await_done(client, second)["status"] == "DONE", "the worker survived the first job"
