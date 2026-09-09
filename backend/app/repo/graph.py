@@ -255,6 +255,40 @@ def set_position(
     )
 
 
+def set_positions(
+    conn: Connection, session_id: int, positions: list[tuple[int, float, float]]
+) -> int:
+    """
+    Persist a whole arrangement (R2.12). Returns the number of rows written.
+
+    One statement rather than a loop of `set_position`: a settled 200-node
+    layout is a single event, and it should cost one round trip rather than
+    two hundred.
+
+    The count matters. This UPDATEs, so a paper with no node in this session is
+    a no-op -- which is the behaviour we want, because a node can be removed
+    between the layout settling and the save arriving and the rest of the
+    arrangement is still worth keeping. Returning the count is what keeps that
+    from being silent: the caller can see it saved fewer than it sent.
+    """
+    if not positions:
+        return 0
+    result = conn.execute(
+        text(
+            "UPDATE graph_nodes SET pos_x = :pos_x, pos_y = :pos_y"
+            " WHERE session_id = :session_id AND paper_id = :paper_id"
+        ),
+        [
+            {"session_id": session_id, "paper_id": paper_id, "pos_x": x, "pos_y": y}
+            for paper_id, x, y in positions
+        ],
+    )
+    # executemany reports the total across the batch on SQLite. When a driver
+    # declines to give a count it returns -1, and reporting that as "saved -1"
+    # would be worse than falling back to the honest upper bound.
+    return len(positions) if result.rowcount is None or result.rowcount < 0 else result.rowcount
+
+
 def count_by_state(conn: Connection, session_id: int) -> dict[str, int]:
     """Per-state counts for the stats panel (R2.13)."""
     rows = conn.execute(
@@ -278,4 +312,5 @@ __all__ = [
     "nodes_present",
     "remove_node",
     "set_position",
+    "set_positions",
 ]

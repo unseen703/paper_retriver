@@ -99,3 +99,36 @@ export function partitionByQuery(
   }
   return { matched, rest };
 }
+
+/** One node's saved place, in the shape `PUT /positions` accepts. */
+export interface SavedPosition {
+  paper_id: number;
+  x: number;
+  y: number;
+}
+
+/**
+ * Clean a set of laid-out positions for saving (R2.12).
+ *
+ * Two jobs, both about not corrupting a good arrangement:
+ *
+ * **Drop non-finite coordinates.** A layout that goes wrong produces NaN, and
+ * `JSON.stringify` turns NaN into `null` -- so the server sees null where a
+ * number belongs. It rejects that with a 422, which would throw away the
+ * whole request including every position that was fine. Dropping the bad ones
+ * here keeps the good ones.
+ *
+ * **Round to whole units.** Positions are pixels in Cytoscape's space; the
+ * fifteenth decimal place is noise that changes on every layout and makes
+ * every save look like a change.
+ */
+export function positionsToSave(
+  entries: { id: number; x: number; y: number }[],
+): SavedPosition[] {
+  const out: SavedPosition[] = [];
+  for (const { id, x, y } of entries) {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    out.push({ paper_id: id, x: Math.round(x), y: Math.round(y) });
+  }
+  return out;
+}

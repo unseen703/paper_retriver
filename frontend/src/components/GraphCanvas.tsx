@@ -24,7 +24,13 @@ import cytoscape from "cytoscape";
 import fcose from "cytoscape-fcose";
 import cola from "cytoscape-cola";
 import type { GraphEdgeOut, GraphNodeOut } from "../api/client";
-import { isVisibleAt, matchesQuery, navigableNodes } from "./graphInteraction";
+import {
+  isVisibleAt,
+  matchesQuery,
+  navigableNodes,
+  positionsToSave,
+  type SavedPosition,
+} from "./graphInteraction";
 import {
   type LabelMode,
   stylesheet,
@@ -133,6 +139,14 @@ export interface GraphCanvasProps {
   onVisibleCount?: (visible: number, total: number) => void;
   /** Reports how many nodes match the search. */
   onMatchCount?: (matches: number) => void;
+  /**
+   * Called with the settled arrangement so it can be persisted (R2.12).
+   *
+   * The canvas does not talk to the API itself -- it reports positions and
+   * lets the caller decide when and whether to save, the same way it reports
+   * selection rather than owning it.
+   */
+  onPositions?: (positions: SavedPosition[]) => void;
 }
 
 export function GraphCanvas({
@@ -146,6 +160,7 @@ export function GraphCanvas({
   labelMode = "relevant",
   scoreThreshold = 0,
   searchQuery = "",
+  onPositions,
   onVisibleCount,
   onMatchCount,
 }: GraphCanvasProps) {
@@ -155,6 +170,21 @@ export function GraphCanvas({
   // inline callback each render would otherwise tear down and rebuild the
   // whole graph on every parent render.
   const onSelectRef = useRef(onSelect);
+  // A ref, not the prop directly: the Cytoscape effects bind their handlers
+  // once, and closing over the first render's callback would stop saving the
+  // moment the parent re-rendered.
+  const savePositionsRef = useRef<((instance: cytoscape.Core) => void) | null>(null);
+  savePositionsRef.current = onPositions
+    ? (instance: cytoscape.Core) =>
+        onPositions(
+          positionsToSave(
+            instance.nodes().map((node) => ({
+              id: Number(node.id()),
+              ...node.position(),
+            })),
+          ),
+        )
+    : null;
   const onHoverRef = useRef(onHover);
   // Set once the user zooms; suppresses the automatic re-fit so a window
   // resize cannot yank the view away from where they put it.
@@ -411,6 +441,10 @@ export function GraphCanvas({
         liveRef.current?.stop();
         liveRef.current = null;
         rebaseRef.current = true;
+        // After the tail, not on release: the nodes are still easing to rest
+        // for 400ms, and saving at release would store where they were passing
+        // through rather than where they stopped.
+        savePositionsRef.current?.(instance);
       }, 400);
     });
 
@@ -494,7 +528,13 @@ export function GraphCanvas({
     const scatter = seedScatter(nodes.map((n) => n.id));
     const labels = withLabelFlags(nodes, labelMode);
     const years = yearRange(nodes);
+    // Snapshot before the batch: these are the nodes an incremental layout
+    // must leave where they are (PLAN.md M6).
+    const existingIds = new Set(instance.nodes().map((n) => n.id()));
     let added = 0;
+    // Of the nodes that arrive this pass, how many came with a saved place?
+    // A node that has one does not need laying out -- it needs leaving alone.
+    let addedWithSavedPosition = 0;
 
     instance.batch(() => {
       // Remove what is gone first, so a removed node cannot leave a dangling
@@ -512,6 +552,7 @@ export function GraphCanvas({
           existing.data({ ...data, pinned: existing.data("pinned") });
         } else {
           added += 1;
+          if (node.pos) addedWithSavedPosition += 1;
           instance.add({
             group: "nodes",
             data,
@@ -568,24 +609,63 @@ export function GraphCanvas({
     // which is disorienting in a way that a missed node is not. Tidy and Reset
     // zoom both re-frame on request, and either is one click away.
     if (tidyRequested) userAdjusted.current = false;
-    // A fresh graph -- every node new -- is laid out from the deterministic
-    // scatter rather than from whatever happens to be on screen. That makes
-    // the first layout idempotent, which it has to be: StrictMode runs this
-    // effect twice, and without the reset the second run inherited the first
-    // run's half-animated positions, so the result depended on timing.
-    // Growth is left alone, so an expansion still extends the picture the user
-    // has learned instead of rearranging it (PLAN.md M6).
-    const freshGraph = added === instance.nodes().length;
+    // Everything that arrived already knows where it goes, and nobody asked
+    // for a rearrangement: there is nothing to lay out.
+    //
+    // Without this, R2.12 defeated itself. On a reload every node is new to a
+    // fresh Cytoscape instance, so the layout treated the graph as fresh, threw
+    // away the positions it had just loaded, re-solved from the scatter, and
+    // saved the result -- a different arrangement every time you opened the
+    // page, from a feature whose whole purpose is that it is the same one.
+    // Caught by reloading and watching node 1 move from (-215,-109) to
+    // (-658,-198).
+    if (addedWithSavedPosition === added && !tidyRequested) {
+      fitOnce.current(instance, false);
+      rebaseRef.current = true;
+      return;
+    }
+
+    // A fresh graph -- every node new, none of them remembered -- is laid out
+    // from the deterministic scatter rather than from whatever happens to be
+    // on screen. That makes the first layout idempotent, which it has to be:
+    // StrictMode runs this effect twice, and without the reset the second run
+    // inherited the first run's half-animated positions, so the result
+    // depended on timing. Growth is left alone, so an expansion extends the
+    // picture the user has learned instead of rearranging it (PLAN.md M6).
+    //
+    // One saved position is enough to disqualify "fresh": that is growth
+    // around something the user already arranged, not a blank slate.
+    const freshGraph = added === instance.nodes().length && addedWithSavedPosition === 0;
     rebaseRef.current = true;
     layoutRunningRef.current = true;
-    layoutRef.current = runLayout(instance, freshGraph ? scatter : null, () => {
-      // `force` on Tidy: an explicit request to rearrange includes re-framing.
-      fitOnce.current(instance, tidyRequested);
-    }, () => {
-      layoutRunningRef.current = false;
-      // Whatever the layout settled on is the new rest position.
-      rebaseRef.current = true;
-    });
+    layoutRef.current = runLayout(
+      instance,
+      freshGraph ? scatter : null,
+      () => {
+        // `force` on Tidy: an explicit request to rearrange includes re-framing.
+        fitOnce.current(instance, tidyRequested);
+      },
+      () => {
+        layoutRunningRef.current = false;
+        // Whatever the layout settled on is the new rest position.
+        rebaseRef.current = true;
+        // ...and worth keeping. Saved here rather than on every frame: the
+        // float moves nodes continuously, so saving mid-animation would store
+        // a wobble rather than the arrangement.
+        savePositionsRef.current?.(instance);
+      },
+      // A fresh graph has nothing to preserve, and Tidy is an explicit request
+      // to rearrange -- pinning there would make the button do nothing.
+      // Pinned: everything already on screen, plus everything that arrived
+      // knowing where it belongs. Tidy is an explicit request to rearrange, so
+      // it pins nothing.
+      tidyRequested
+        ? null
+        : new Set([
+            ...existingIds,
+            ...nodes.filter((n) => n.pos).map((n) => String(n.id)),
+          ]),
+    );
   }, [nodes, edges, relayoutToken, labelMode]);
 
   // --- idle float ----------------------------------------------------------
@@ -809,6 +889,19 @@ function runLayout(
   resetTo: Map<number, cytoscape.Position> | null,
   onFrame: () => void,
   onSettled: () => void,
+  /**
+   * Ids that were already on screen before this batch, or null for a fresh
+   * graph and for an explicit Tidy.
+   *
+   * PLAN.md M6 is literal about this: `fixedNodeConstraint: existingNodes`.
+   * Pinning only the nodes the user has *dragged* is a much weaker promise --
+   * it keeps your deliberate arrangements and lets everything else be
+   * reshuffled by each expansion, which is precisely the spatial-memory loss
+   * M6 calls the thing that "kills usability". BUILD.md's verification is
+   * "expand 3x and confirm existing nodes do not move", not "confirm the
+   * dragged ones do not move".
+   */
+  keepFixed: Set<string> | null = null,
 ): cytoscape.Layouts {
   if (resetTo) {
     instance.nodes().forEach((node) => {
@@ -822,7 +915,7 @@ function runLayout(
   // picture the user has learned.
   const pinned: { nodeId: string; position: cytoscape.Position }[] = [];
   instance.nodes().forEach((node) => {
-    if (node.data("pinned")) {
+    if (node.data("pinned") || keepFixed?.has(node.id())) {
       pinned.push({ nodeId: node.id(), position: { ...node.position() } });
     }
   });

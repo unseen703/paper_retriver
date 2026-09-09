@@ -139,6 +139,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/{sid}/positions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Save Positions
+         * @description Persist the current arrangement (R2.12).
+         *
+         *     PLAN.md M6 calls layout instability the thing that "kills usability", and
+         *     the `pos_x`/`pos_y` columns have been in the schema since migration 0001
+         *     with nothing ever writing one -- so every reload threw away whatever the
+         *     user had arranged. This is the missing half.
+         *
+         *     **PUT, and bulk.** The client calls it after every settled layout and after
+         *     dragging stops, so it has to be safely repeatable; and a 200-node graph
+         *     settling is one event, not two hundred.
+         *
+         *     **A paper with no node here is skipped rather than refused.** A node can be
+         *     removed between the layout settling and this request landing. That is a
+         *     race, and failing the whole request over it would discard an arrangement
+         *     that is still correct for everything else. The `saved` count is what keeps
+         *     the skip visible instead of silent.
+         */
+        put: operations["save_positions_api_sessions__sid__positions_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/{sid}/expansions": {
         parameters: {
             query?: never;
@@ -631,6 +666,18 @@ export interface components {
             };
         };
         /**
+         * NodePosition
+         * @description Where one node sits, as the client laid it out (R2.12).
+         */
+        NodePosition: {
+            /** Paper Id */
+            paper_id: number;
+            /** X */
+            x: number;
+            /** Y */
+            y: number;
+        };
+        /**
          * NodeResponse
          * @description A node as the graph holds it, plus the title so the UI can render it.
          */
@@ -725,6 +772,31 @@ export interface components {
             removed: number[];
             /** Gc Swept */
             gc_swept: number[];
+        };
+        /**
+         * SavePositionsRequest
+         * @description A whole arrangement in one request (R2.12).
+         *
+         *     Bulk because a settled layout is one event: a 200-node graph sent one node
+         *     at a time would be 200 transactions describing a single act.
+         *
+         *     The cap is `max_nodes` with room to spare. A graph cannot exceed that, so a
+         *     larger list is either a bug or something not worth writing.
+         */
+        SavePositionsRequest: {
+            /** Positions */
+            positions?: components["schemas"]["NodePosition"][];
+        };
+        /**
+         * SavePositionsResponse
+         * @description How many rows were actually written.
+         */
+        SavePositionsResponse: {
+            /**
+             * Saved
+             * @description Rows updated. Lower than what was sent when a node was removed between the layout settling and this request landing -- a race, not an error, but one worth being able to see.
+             */
+            saved: number;
         };
         /**
          * SearchHit
@@ -1038,6 +1110,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GraphResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    save_positions_api_sessions__sid__positions_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session id. */
+                sid: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SavePositionsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavePositionsResponse"];
                 };
             };
             /** @description Validation Error */

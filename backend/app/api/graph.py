@@ -27,6 +27,7 @@ global figure.
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -38,7 +39,17 @@ from app.models import NODE_STATES
 from app.repo import edges as edges_repo
 from app.repo import graph as graph_repo
 from app.repo import papers as papers_repo
-from app.schemas.graph import GraphEdgeOut, GraphMeta, GraphNodeOut, GraphResponse, Position
+from app.schemas.graph import (
+    GraphEdgeOut,
+    GraphMeta,
+    GraphNodeOut,
+    GraphResponse,
+    Position,
+    SavePositionsRequest,
+    SavePositionsResponse,
+)
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/sessions", tags=["graph"])
 
@@ -139,6 +150,45 @@ def get_graph(
             crawl_completeness=(non_stub / len(out_nodes)) if out_nodes else 1.0,
         ),
     )
+
+
+@router.put("/{sid}/positions", response_model=SavePositionsResponse)
+def save_positions(
+    sid: Annotated[int, Depends(existing_session)],
+    body: SavePositionsRequest,
+    engine: Annotated[Engine, Depends(get_engine)],
+) -> SavePositionsResponse:
+    """
+    Persist the current arrangement (R2.12).
+
+    PLAN.md M6 calls layout instability the thing that "kills usability", and
+    the `pos_x`/`pos_y` columns have been in the schema since migration 0001
+    with nothing ever writing one -- so every reload threw away whatever the
+    user had arranged. This is the missing half.
+
+    **PUT, and bulk.** The client calls it after every settled layout and after
+    dragging stops, so it has to be safely repeatable; and a 200-node graph
+    settling is one event, not two hundred.
+
+    **A paper with no node here is skipped rather than refused.** A node can be
+    removed between the layout settling and this request landing. That is a
+    race, and failing the whole request over it would discard an arrangement
+    that is still correct for everything else. The `saved` count is what keeps
+    the skip visible instead of silent.
+    """
+    with engine.begin() as conn:
+        saved = graph_repo.set_positions(
+            conn, sid, [(p.paper_id, p.x, p.y) for p in body.positions]
+        )
+
+    if saved != len(body.positions):
+        logger.info(
+            "positions_partially_saved session=%s sent=%s saved=%s",
+            sid,
+            len(body.positions),
+            saved,
+        )
+    return SavePositionsResponse(saved=saved)
 
 
 __all__ = ["router"]

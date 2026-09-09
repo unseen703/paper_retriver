@@ -9,7 +9,7 @@ import { ExpansionControls } from "./components/ExpansionControls";
 import { NodeInspector, type Neighbour } from "./components/NodeInspector";
 import { ViewControls } from "./components/ViewControls";
 import type { LabelMode } from "./components/stylesheet";
-import { clampThreshold } from "./components/graphInteraction";
+import { clampThreshold, type SavedPosition } from "./components/graphInteraction";
 
 /**
  * The shell around the canvas: a legend, a couple of view controls, and a
@@ -48,6 +48,27 @@ export default function App() {
     [],
   );
   const handleMatches = useCallback((matches: number) => setMatchCount(matches), []);
+
+  /**
+   * Persist the arrangement whenever the canvas says it settled (R2.12).
+   *
+   * Fire-and-forget on purpose. A failed save costs the user nothing they can
+   * see right now -- the graph on screen is unchanged, and the next settle
+   * tries again -- so surfacing it as an error banner would interrupt them
+   * about something they cannot act on. It is logged, so it is not silent.
+   *
+   * The fixture graph is skipped: its ids are invented, and saving them would
+   * write demo coordinates over the real session's arrangement.
+   */
+  const handlePositions = useCallback(
+    (positions: SavedPosition[]) => {
+      if (showFixture || positions.length === 0) return;
+      api
+        .savePositions(sessionId, positions)
+        .catch((error) => console.warn("could not save layout positions", error));
+    },
+    [sessionId, showFixture],
+  );
 
   const health = useQuery({ queryKey: ["health"], queryFn: api.health });
   const graph = useQuery({
@@ -202,6 +223,7 @@ export default function App() {
           searchQuery={searchQuery}
           onVisibleCount={handleVisible}
           onMatchCount={handleMatches}
+          onPositions={handlePositions}
         />
 
           <p style={hintStyle}>drag to move · scroll to zoom · hover to trace · click to inspect</p>
