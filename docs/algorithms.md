@@ -120,11 +120,73 @@ invalidate the whole graph underneath a cache.
 
 ---
 
+## Co-citation and bibliographic coupling
+
+Implementation: `backend/app/services/similarity.py`.
+
+    bibliographic coupling(A, B)   papers that BOTH A and B cite.
+                                   Fixed at publication; never changes.
+    co-citation(A, B)              papers that cite BOTH A and B.
+                                   Grows as the field cites them together.
+
+One says *builds on the same work*, the other *is discussed in the same
+breath*. They genuinely disagree — a paper can score high on one and zero on
+the other — so they stay separate rather than collapsing into a single
+"similarity".
+
+### These run over the corpus, not the drawn graph
+
+The single most important line in that module. BUILD.md:
+
+> two modern papers whose only shared reference is a 2014 paper must have
+> non-zero bib_coupling. This test protects the design; without it the year
+> floor silently degrades your best feature.
+
+A pre-2015 reference is stored with all its edges and deliberately given no
+`graph_nodes` row — that is what a boundary paper *is*. Restricting these
+queries to graph membership, which is correct for PageRank, returns zero for
+exactly the papers coupling is best at finding, and looks entirely reasonable
+doing it. R1.9 asserted the precondition; `test_similarity.py` now asserts the
+feature.
+
+---
+
+## ⚠ Every structural signal is currently empty on the live corpus
+
+Measured against `data/app.db`, and worth stating plainly because it is a fact
+about the data rather than about the code:
+
+| | |
+|---|---|
+| Papers | 229 — of which **226 are STUB**, 3 are METADATA |
+| Edges | 226 |
+| Edges *from* a seed (its references) | 99 |
+| Edges *to* a seed (papers citing it) | 127 |
+| Papers with more than one citer | **1** |
+| PageRank | suppressed (2% completeness) |
+| Bibliographic coupling | 0 papers |
+| Co-citation | 0 papers |
+
+The corpus is a **one-hop star**: three seeds at the centre, their references
+below, their citers above, and almost no edges among the periphery. Only the
+seeds have been crawled, so nothing on the rim has references of its own.
+
+Coupling needs two papers citing the same third paper. Co-citation needs two
+papers cited by the same third. On a star, neither exists — so both are
+structurally zero, and PageRank is suppressed for the same underlying reason.
+
+**This is not something to fix in code.** All three measures are tested and
+correct; the graph simply has not been crawled deep enough to have the
+structure they measure. What it needs is expansion from the current candidates
+so the rim gains edges among itself.
+
+Until then R3's ranking has almost nothing structural to rank on, and any
+weight put on these features would be weight on zeroes.
+
+---
+
 ## What is not here yet
 
-- **Co-citation and bibliographic coupling.** Local measures, and per PLAN.md
-  mitigation 3 the ones that should carry most of the ranking weight. The
-  R1.9 boundary-paper test needs re-running against them.
 - **Age-normalized citations, recency, venue tier.**
 - **Rank-percentile normalization** — PLAN.md Appendix B.7 is explicit that
   this is *not* a z-score, because the citation distribution is heavy-tailed
