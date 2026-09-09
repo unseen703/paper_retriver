@@ -61,6 +61,58 @@ export interface paths {
         get: operations["get_node_detail_api_sessions__sid__nodes__paper_id__get"];
         put?: never;
         post?: never;
+        /**
+         * Delete Node
+         * @description Remove one node, and whatever it was the only justification for (R2.6).
+         *
+         *     `dry_run` defaults to **true**: the safe reading of an omitted parameter is
+         *     the one that does not destroy anything. The preview runs the identical
+         *     computation inside a rolled-back transaction, so its count is what actually
+         *     happens rather than a second implementation free to disagree.
+         *
+         *     Removal takes graph membership only. The paper and its edges stay in the
+         *     corpus, still coupling everything that cites them.
+         */
+        delete: operations["delete_node_api_sessions__sid__nodes__paper_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Label Node
+         * @description Change one paper's label (R2.2).
+         *
+         *     One endpoint rather than `/like` + `/dislike` + `/unlike`: PLAN.md wants
+         *     "one state machine, one validation path, one audit write", and three
+         *     endpoints would be three places to forget the event that
+         *     `scripts/rebuild_state.py` rebuilds from.
+         *
+         *     The two refusals mean different things. A paper with no node here is a 404
+         *     -- boundary papers are in the corpus by design and have no state to change.
+         *     A transition the machine forbids is a 409 carrying its `error_code`,
+         *     because "you cannot do that" is not actionable while `SEED_NOT_LABELABLE`
+         *     names a rule the UI can explain.
+         */
+        patch: operations["label_node_api_sessions__sid__nodes__paper_id__patch"];
+        trace?: never;
+    };
+    "/api/sessions/{sid}/nodes/{paper_id}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restore
+         * @description Bring a tombstoned paper back (R2.8).
+         *
+         *     The only path back, and never automatic -- expansion must not rediscover
+         *     something you removed on purpose. It returns as CANDIDATE rather than to
+         *     whatever label it had: that label was part of a judgment you reversed by
+         *     removing it, and restoring it silently would put words in your mouth.
+         */
+        post: operations["restore_api_sessions__sid__nodes__paper_id__restore_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -98,9 +150,29 @@ export interface paths {
         put?: never;
         /**
          * Create Expansion
-         * @description Expand this session's graph by one hop and return what the run did.
+         * @description Queue an expansion and answer with the id to poll.
          */
         post: operations["create_expansion_api_sessions__sid__expansions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{sid}/expansions/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Expansion
+         * @description One job's status, stage and counters. Poll this about once a second.
+         */
+        get: operations["get_expansion_api_sessions__sid__expansions__job_id__get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -142,12 +214,6 @@ export interface components {
         AddNodeRequest: {
             /** S2 Paper Id */
             s2_paper_id: string;
-            /**
-             * As State
-             * @default SEED
-             * @constant
-             */
-            as_state: "SEED";
             /**
              * Force
              * @description Admit the paper even if the filter cascade rejects it. The rejection is still recorded -- an override is never silent.
@@ -351,6 +417,135 @@ export interface components {
             config_version: string;
         };
         /**
+         * JobAccepted
+         * @description The 202 body (R2.4).
+         *
+         *     Just the id and where to look. The work has not started, so there is
+         *     nothing else true to say yet, and inventing an optimistic count here would
+         *     be a number the poll then contradicts.
+         */
+        JobAccepted: {
+            /** Job Id */
+            job_id: number;
+            /** Session Id */
+            session_id: number;
+            /**
+             * Status
+             * @default QUEUED
+             */
+            status: string;
+            /**
+             * Poll
+             * @description Where to poll for this job's progress.
+             */
+            poll: string;
+        };
+        /**
+         * JobProgress
+         * @description Counters as far as the run has got.
+         *
+         *     Every field is optional because they genuinely are unknown until the stage
+         *     that produces them completes -- and `null` is the honest way to say "not
+         *     yet", where a 0 would read as "none found".
+         */
+        JobProgress: {
+            /**
+             * Pool
+             * @description Candidates pooled. Null until pooling.
+             */
+            pool?: number | null;
+            /**
+             * Filtered
+             * @description Boundary papers stored without a node. Null until fetching ends.
+             */
+            filtered?: number | null;
+            /**
+             * Added
+             * @description Nodes admitted. Null until ranking ends.
+             */
+            added?: number | null;
+            /** Api Calls */
+            api_calls?: number | null;
+            /** Cache Hits */
+            cache_hits?: number | null;
+        };
+        /**
+         * JobStatus
+         * @description What `GET /expansions/{id}` returns -- PLAN.md's `{status, stage, progress}`.
+         *
+         *     `stage` is derived from the counters rather than stored: a stored stage is
+         *     a second place for the truth to live, and it is the copy that goes stale
+         *     when a process dies mid-run.
+         *
+         *     `result` is present only once the job is DONE, and carries exactly what the
+         *     synchronous R1.18 response carried. The client needs `added_paper_ids` to
+         *     update the graph, and making it fetch the whole graph again to discover
+         *     three new nodes would undo the point of reporting them at all.
+         */
+        JobStatus: {
+            /** Job Id */
+            job_id: number;
+            /** Session Id */
+            session_id: number;
+            /**
+             * Status
+             * @description QUEUED | RUNNING | DONE | FAILED | CANCELLED.
+             */
+            status: string;
+            /**
+             * Stage
+             * @description QUEUED | FETCHING | POOLING | RANKING | ADDING | DONE | ...
+             */
+            stage: string;
+            progress: components["schemas"]["JobProgress"];
+            /**
+             * Error
+             * @description Why the run stopped early, or why it failed. A DONE job with an error was truncated, not broken -- a partial expansion is a success.
+             */
+            error?: string | null;
+            /** @description Present once status is DONE. */
+            result?: components["schemas"]["ExpandResponse"] | null;
+            /** Started At */
+            started_at?: string | null;
+            /** Finished At */
+            finished_at?: string | null;
+        };
+        /**
+         * LabelRequest
+         * @description Change one paper's label (R2.2).
+         *
+         *     One endpoint, not `/like` + `/dislike` + `/unlike`. PLAN.md: "One state
+         *     machine, one validation path, one audit write." Three endpoints means three
+         *     places to forget the event, and the event log is what
+         *     `scripts/rebuild_state.py` reconstructs the graph from.
+         */
+        LabelRequest: {
+            /**
+             * State
+             * @description Target state. SEED is accepted by the schema and refused by the state machine with CANNOT_PROMOTE_TO_SEED -- a 409 that names the rule is more useful than a 422 that says the value is not in an enum, because the caller's mistake is about meaning, not typing.
+             * @enum {string}
+             */
+            state: "CANDIDATE" | "LIKED" | "DISLIKED" | "SEED";
+        };
+        /**
+         * LabelResponse
+         * @description BUILD.md: 200 returns `{node, rescored_count}`.
+         */
+        LabelResponse: {
+            node: components["schemas"]["NodeResponse"];
+            /**
+             * Swept
+             * @description Papers the sweep collected as a consequence of this label change. Non-empty only when the change cost the graph an anchor. Without it the response would describe one node while the client's picture of the rest of the graph silently went stale.
+             */
+            swept?: number[];
+            /**
+             * Rescored Count
+             * @description Nodes whose score changed as a result. Always 0 until R3 ships ranking -- reported now so the contract does not change shape when it starts being non-zero.
+             * @default 0
+             */
+            rescored_count: number;
+        };
+        /**
          * NodeDetail
          * @description Everything R1.22's `<NodeInspector>` renders.
          *
@@ -497,6 +692,41 @@ export interface components {
             stage: string;
         };
         /**
+         * RemovalCandidate
+         * @description One paper a removal would take. Named, not merely counted.
+         */
+        RemovalCandidate: {
+            /** Id */
+            id: number;
+            /** Title */
+            title: string;
+        };
+        /**
+         * RemovalPreview
+         * @description `dry_run=true`. PLAN.md marks this the call you always make first.
+         */
+        RemovalPreview: {
+            /** Would Remove */
+            would_remove: components["schemas"]["RemovalCandidate"][];
+            /** Count */
+            count: number;
+        };
+        /**
+         * RemovalResult
+         * @description `dry_run=false`.
+         *
+         *     `removed` and `gc_swept` stay separate because two different things
+         *     happened: you removed one paper, and the system collected others as a
+         *     consequence. One merged list would hide which was your decision, and
+         *     R2.14's drawer groups by exactly that distinction.
+         */
+        RemovalResult: {
+            /** Removed */
+            removed: number[];
+            /** Gc Swept */
+            gc_swept: number[];
+        };
+        /**
          * SearchHit
          * @description One search result, annotated with this session's history of it.
          */
@@ -525,6 +755,20 @@ export interface components {
              * @default false
              */
             previously_removed: boolean;
+        };
+        /**
+         * TransitionRefusedDetail
+         * @description Why the state machine refused, in the shape the UI branches on.
+         */
+        TransitionRefusedDetail: {
+            /** Detail */
+            detail: string;
+            /** Error Code */
+            error_code: string;
+            /** From State */
+            from_state: string;
+            /** To State */
+            to_state: string;
         };
         /** ValidationError */
         ValidationError: {
@@ -654,6 +898,124 @@ export interface operations {
             };
         };
     };
+    delete_node_api_sessions__sid__nodes__paper_id__delete: {
+        parameters: {
+            query?: {
+                /** @description Preview only. Defaults to true -- PLAN.md: always call first. */
+                dry_run?: boolean;
+            };
+            header?: never;
+            path: {
+                /** @description Local paper id. */
+                paper_id: number;
+                /** @description Session id. */
+                sid: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RemovalPreview"] | components["schemas"]["RemovalResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    label_node_api_sessions__sid__nodes__paper_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local paper id. */
+                paper_id: number;
+                /** @description Session id. */
+                sid: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LabelRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LabelResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TransitionRefusedDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    restore_api_sessions__sid__nodes__paper_id__restore_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local paper id. */
+                paper_id: number;
+                /** @description Session id. */
+                sid: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NodeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_graph_api_sessions__sid__graph_get: {
         parameters: {
             query?: {
@@ -706,12 +1068,46 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_expansion_api_sessions__sid__expansions__job_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The id returned by the 202. */
+                job_id: number;
+                /** @description Session id. */
+                sid: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ExpandResponse"];
+                    "application/json": components["schemas"]["JobStatus"];
                 };
             };
             /** @description Validation Error */

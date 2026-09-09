@@ -1,11 +1,16 @@
 """
-R1.18 -- `POST /api/sessions/{sid}/expansions`, **synchronous**.
+R1.18 -- what an expansion *does*, now asynchronous (R2.4).
 
-BUILD.md is explicit: return 200 with the result directly, and do not build the
-job system yet -- that is R2.4. PLAN.md sketches a 202 with a job id, and this
-deliberately does not do that. Building the queue now would mean writing the
-polling endpoint, the cancel endpoint and the concurrency guard before anything
-has ever been expanded through HTTP.
+These were written against the synchronous R1.18 endpoint, which returned 200
+with the finished result because there was no job system to poll. R2.4 built
+it, so the transport changed to 202-plus-polling and every test here changed
+with it -- but only the transport. Each assertion still asks the same question
+about what the run did, which is the point of keeping them rather than
+replacing them: the queue is new, the pipeline underneath it is not, and a
+regression in the second would be easy to miss while admiring the first.
+
+The queue itself -- the 202, the 409, the stages, crash recovery -- is tested
+in `test_api_jobs.py`.
 
 The response carries what the run did, not just that it happened. An expansion
 that fetched sixty papers and admitted none is a completely different event
@@ -25,6 +30,7 @@ room to admit anything at all -- that is a 422.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -85,7 +91,31 @@ def _seed(client: TestClient) -> int:
 
 
 def _expand(client: TestClient, **body: object) -> object:
+    """Queue an expansion. Returns the raw POST response, for status checks."""
     return client.post(f"/api/sessions/{SID}/expansions", json=body)
+
+
+def _run(client: TestClient, **body: object) -> dict[str, object]:
+    """
+    Queue an expansion, wait for it, and return what it did.
+
+    The shape it returns is exactly R1.18's synchronous response body -- that
+    is what `JobStatus.result` carries -- so the assertions below did not have
+    to change their meaning when the transport did.
+    """
+    response = client.post(f"/api/sessions/{SID}/expansions", json=body)
+    assert response.status_code == 202, response.text
+    job_id = response.json()["job_id"]
+
+    deadline = time.monotonic() + 60.0
+    while time.monotonic() < deadline:
+        status = client.get(f"/api/sessions/{SID}/expansions/{job_id}").json()
+        if status["status"] not in ("QUEUED", "RUNNING"):
+            assert status["status"] == "DONE", status
+            assert status["result"] is not None
+            return dict(status["result"])
+        time.sleep(0.05)
+    raise AssertionError(f"expansion {job_id} never finished")
 
 
 # --------------------------------------------------------------------------
@@ -93,22 +123,23 @@ def _expand(client: TestClient, **body: object) -> object:
 # --------------------------------------------------------------------------
 
 
-def test_expanding_returns_200_not_202(env: tuple[TestClient, Engine]) -> None:
+def test_expanding_is_asynchronous_as_of_r2_4(env: tuple[TestClient, Engine]) -> None:
     """
-    Synchronous at R1. A 202 would promise a job id that nothing can poll,
-    because the job system is R2.4.
+    This test used to be `test_expanding_returns_200_not_202`, and it was right
+    at the time: a 202 would have promised a job id nothing could poll. R2.4
+    built the queue, so the promise is now one the server keeps.
     """
     client, _ = env
     _seed(client)
     response = _expand(client, hops=1, max_new=20)
-    assert response.status_code == 200, response.text  # type: ignore[attr-defined]
+    assert response.status_code == 202, response.text  # type: ignore[attr-defined]
 
 
 def test_the_response_carries_the_added_node_ids(env: tuple[TestClient, Engine]) -> None:
     """BUILD.md: "returns added node ids"."""
     client, _ = env
     _seed(client)
-    body = _expand(client, hops=1, max_new=20).json()  # type: ignore[attr-defined]
+    body = _run(client, hops=1, max_new=20)
     assert isinstance(body["added_paper_ids"], list)
     assert len(body["added_paper_ids"]) == body["n_added"]
 
@@ -116,7 +147,7 @@ def test_the_response_carries_the_added_node_ids(env: tuple[TestClient, Engine])
 def test_expanding_from_a_seed_actually_adds_nodes(env: tuple[TestClient, Engine]) -> None:
     client, _ = env
     _seed(client)
-    body = _expand(client, hops=1, max_new=20).json()  # type: ignore[attr-defined]
+    body = _run(client, hops=1, max_new=20)
     assert body["n_added"] > 0
 
 
@@ -124,7 +155,7 @@ def test_the_added_ids_are_really_in_the_graph(env: tuple[TestClient, Engine]) -
     """The ids have to be usable against GET /graph, or they are decoration."""
     client, _ = env
     _seed(client)
-    added = set(_expand(client, hops=1, max_new=20).json()["added_paper_ids"])  # type: ignore[attr-defined]
+    added = set(_run(client, hops=1, max_new=20)["added_paper_ids"])  # type: ignore[arg-type]
     graph = client.get(f"/api/sessions/{SID}/graph").json()
     assert added <= {n["id"] for n in graph["nodes"]}
 
@@ -133,7 +164,7 @@ def test_the_added_nodes_are_candidates(env: tuple[TestClient, Engine]) -> None:
     """Expansion produces candidates; only POST /nodes produces seeds."""
     client, _ = env
     seed_id = _seed(client)
-    _expand(client, hops=1, max_new=20)
+    _run(client, hops=1, max_new=20)
     graph = client.get(f"/api/sessions/{SID}/graph").json()
     states = {n["id"]: n["state"] for n in graph["nodes"]}
     assert states[seed_id] == "SEED"
@@ -147,7 +178,7 @@ def test_the_response_reports_what_the_run_did(env: tuple[TestClient, Engine]) -
     """
     client, _ = env
     _seed(client)
-    body = _expand(client, hops=1, max_new=20).json()  # type: ignore[attr-defined]
+    body = _run(client, hops=1, max_new=20)
     assert set(body) >= {
         "n_pool",
         "n_added",
@@ -170,7 +201,7 @@ def test_boundary_papers_are_reported(env: tuple[TestClient, Engine]) -> None:
     """
     client, _ = env
     _seed(client)
-    body = _expand(client, hops=1, max_new=20).json()  # type: ignore[attr-defined]
+    body = _run(client, hops=1, max_new=20)
     assert body["boundary"] > 0
 
 
@@ -178,7 +209,7 @@ def test_an_expansion_row_is_recorded(env: tuple[TestClient, Engine]) -> None:
     """Every expansion is auditable, including the ones that added nothing."""
     client, engine = env
     _seed(client)
-    _expand(client, hops=1, max_new=20)
+    _run(client, hops=1, max_new=20)
     with engine.connect() as conn:
         assert conn.execute(text("SELECT COUNT(*) FROM expansions")).scalar() == 1
 
@@ -186,7 +217,7 @@ def test_an_expansion_row_is_recorded(env: tuple[TestClient, Engine]) -> None:
 def test_max_new_is_respected(env: tuple[TestClient, Engine]) -> None:
     client, _ = env
     _seed(client)
-    body = _expand(client, hops=1, max_new=5).json()  # type: ignore[attr-defined]
+    body = _run(client, hops=1, max_new=5)
     assert body["n_added"] <= 5
 
 
@@ -198,9 +229,7 @@ def test_expanding_a_session_with_no_anchors_is_not_an_error(
     says so via `error` rather than by returning a 4xx.
     """
     client, _ = env
-    response = _expand(client, hops=1, max_new=20)
-    assert response.status_code == 200, response.text  # type: ignore[attr-defined]
-    assert response.json()["n_added"] == 0  # type: ignore[attr-defined]
+    assert _run(client, hops=1, max_new=20)["n_added"] == 0
 
 
 # --------------------------------------------------------------------------
@@ -238,14 +267,15 @@ def test_a_small_api_budget_truncates_rather_than_failing(
     """
     client, _ = env
     _seed(client)
-    response = _expand(client, hops=1, max_new=20, api_call_budget=1)
-    assert response.status_code == 200, response.text  # type: ignore[attr-defined]
+    # The job reaches DONE rather than FAILED. `_run` asserts that, which is
+    # the whole claim: running out of budget is not an error.
+    assert _run(client, hops=1, max_new=20, api_call_budget=1)["n_added"] >= 0
 
 
 def test_room_below_max_new_is_reported_as_truncated(env: tuple[TestClient, Engine]) -> None:
     client, _ = env
     _seed(client)
-    body = _expand(client, hops=1, max_new=20, max_nodes=3).json()  # type: ignore[attr-defined]
+    body = _run(client, hops=1, max_new=20, max_nodes=3)
     assert body["truncated"] is True
 
 
@@ -258,7 +288,7 @@ def test_an_empty_body_uses_the_defaults(env: tuple[TestClient, Engine]) -> None
     """Expanding with no options is the common case and must not 422."""
     client, _ = env
     _seed(client)
-    assert client.post(f"/api/sessions/{SID}/expansions", json={}).status_code == 200
+    assert client.post(f"/api/sessions/{SID}/expansions", json={}).status_code == 202
 
 
 def test_multi_hop_is_rejected_rather_than_silently_ignored(
@@ -311,5 +341,5 @@ def test_the_route_is_in_the_openapi_schema(env: tuple[TestClient, Engine]) -> N
 def test_the_response_is_typed(env: tuple[TestClient, Engine]) -> None:
     client, _ = env
     schema = client.get("/openapi.json").json()
-    ok = schema["paths"]["/api/sessions/{sid}/expansions"]["post"]["responses"]["200"]
-    assert ok["content"]["application/json"]["schema"] != {}
+    accepted = schema["paths"]["/api/sessions/{sid}/expansions"]["post"]["responses"]["202"]
+    assert accepted["content"]["application/json"]["schema"] != {}

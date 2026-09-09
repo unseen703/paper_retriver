@@ -32,8 +32,21 @@ export function ExpansionControls({ sessionId, disabled }: ExpansionControlsProp
   const [maxNew, setMaxNew] = useState(20);
   const [result, setResult] = useState<ExpandResponse | null>(null);
 
+  // R2.4 made expansion a job: POST returns 202 with an id, and the result
+  // arrives by polling. `expandAndWait` hides the loop, so this component
+  // still reads as one call; R2.9 will surface the intermediate stages it
+  // already receives through `onProgress`.
   const expand = useMutation({
-    mutationFn: () => api.expand(sessionId, maxNew),
+    mutationFn: async () => {
+      const status = await api.expandAndWait(sessionId, maxNew);
+      if (status.status !== "DONE") {
+        // A FAILED job is an error here even though the HTTP calls all
+        // succeeded -- otherwise the button would report success for a run
+        // that did nothing.
+        throw new Error(status.error ?? "The expansion did not finish.");
+      }
+      return status.result ?? null;
+    },
     onSuccess: (data) => {
       setResult(data);
       queryClient.invalidateQueries({ queryKey: ["graph", sessionId] });
@@ -50,6 +63,10 @@ export function ExpansionControls({ sessionId, disabled }: ExpansionControlsProp
     if (error instanceof ApiError && error.status === 422) {
       // The graph is full. The detail names the ceiling, which is actionable.
       return String(error.detail ?? "Graph is at its node limit.");
+    }
+    if (error instanceof ApiError && error.status === 409) {
+      // One expansion per session. The detail carries the running job's id.
+      return "An expansion is already running for this session.";
     }
     if (error instanceof ApiError && error.status === 503) {
       return "Semantic Scholar is unavailable. Nothing was added.";
