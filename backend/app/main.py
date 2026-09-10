@@ -36,6 +36,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import Engine, text
 
 from app.api import deps
+from app.api.config import router as config_router
 from app.api.expansions import router as expansions_router
 from app.api.graph import router as graph_router
 from app.api.node_detail import router as node_detail_router
@@ -142,6 +143,7 @@ def create_app(db_url: str | None = None) -> FastAPI:
     )
     # Before the session-scoped routers: `/api/sessions` must not be
     # shadowed by `/api/sessions/{sid}/...` matching an empty segment.
+    application.include_router(config_router)
     application.include_router(sessions_router)
     application.include_router(search_router)
     application.include_router(nodes_router)
