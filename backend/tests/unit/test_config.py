@@ -188,7 +188,12 @@ def test_r3_and_r5_weights_are_zero_at_r1() -> None:
 def test_active_r1_weights() -> None:
     assert ranking.weights.quality == 0.40
     assert ranking.weights.recency == 0.30
-    assert ranking.weights.hub == 0.60
+    # Negative. This asserted 0.60 to match a file that said "subtracted" in a
+    # comment beside a positive number -- so the test encoded the bug rather
+    # than the intent, and agreed with the code all the way to a real ranking
+    # that promoted hubs. `score_paper` multiplies; the sign here is the sign
+    # in the score.
+    assert ranking.weights.hub == -0.60
 
 
 def test_budget_fractions() -> None:

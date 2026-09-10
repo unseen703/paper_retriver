@@ -31,6 +31,7 @@ from app.repo import papers as papers_repo
 from app.services.budget import allocate
 from app.services.candidates import build_pool, prescore
 from app.services.categories import CategoryResolver
+from app.services.features import compute_and_store_features
 from app.services.ingest import IngestStats, ingest_neighbour
 
 logger = logging.getLogger(__name__)
@@ -226,6 +227,23 @@ async def expand(
 
     result.api_calls = client.api_calls - calls_at_start
     result.cache_hits = client.cache_hits - hits_at_start
+
+    # (12) POST-COMMIT: recompute features for the whole session (R3).
+    #
+    # The whole session, not only the new nodes -- every feature is a
+    # rank-percentile *within the session*, so admitting one paper changes
+    # where all the others sit. Scoring only the arrivals would leave the
+    # existing graph ranked against a pool that no longer exists.
+    #
+    # Never fatal. The expansion has already committed; a feature pass that
+    # fails must not turn a successful run into an error and lose the papers
+    # it fetched. The scores stay stale until the next run or a PUT /api/config
+    # and that is visible, where a lost expansion would not be.
+    try:
+        compute_and_store_features(engine, session_id, as_of_year)
+    except Exception:  # noqa: BLE001 - a scoring failure must not cost the fetch
+        logger.exception("feature_pass_failed session=%s", session_id)
+
     return _finish(engine, session_id, result, None)
 
 
