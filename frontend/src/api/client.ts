@@ -27,6 +27,12 @@ export type ExpandResponse = components["schemas"]["ExpandResponse"];
 export type JobAccepted = components["schemas"]["JobAccepted"];
 export type JobStatus = components["schemas"]["JobStatus"];
 export type NodePosition = components["schemas"]["NodePosition"];
+export type StatsResponse = components["schemas"]["StatsResponse"];
+export type ReviewResponse = components["schemas"]["ReviewResponse"];
+export type ClearGraphResponse = components["schemas"]["ClearGraphResponse"];
+export type SessionOut = components["schemas"]["SessionOut"];
+export type ReviewBucketOut = components["schemas"]["ReviewBucketOut"];
+export type ReviewPaperOut = components["schemas"]["ReviewPaperOut"];
 export type HealthResponse = components["schemas"]["HealthResponse"];
 
 /**
@@ -118,6 +124,42 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ positions }),
     }),
+
+  /**
+   * Graph statistics (R2.13).
+   *
+   * Server-side rather than counted from the loaded graph: `graph()` can be
+   * filtered by state, and totalling a filtered response would report a subset
+   * as the whole -- a failure whose symptom is that everything looks fine.
+   */
+  stats: (sid: number) => request<StatsResponse>(`/api/sessions/${sid}/stats`),
+
+  /** Every workspace over the shared corpus (R2.16). */
+  sessions: () => request<SessionOut[]>("/api/sessions"),
+
+  createSession: (name: string) =>
+    request<SessionOut>("/api/sessions", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
+
+  /**
+   * Empty this session's graph (R2.15).
+   *
+   * `confirm` is not optional here for the same reason it is not optional on
+   * the server: there should be no way to spell this call that fires by
+   * accident.
+   */
+  clearGraph: (sid: number) =>
+    request<ClearGraphResponse>(`/api/sessions/${sid}/graph?confirm=true`, { method: "DELETE" }),
+
+  /** What the graph is not showing you, and why (R2.14). */
+  review: (sid: number, limit = 100) =>
+    request<ReviewResponse>(`/api/sessions/${sid}/review?limit=${limit}`),
+
+  /** Bring a tombstoned paper back as a CANDIDATE (R2.8). */
+  restore: (sid: number, paperId: number) =>
+    request<NodeResponse>(`/api/sessions/${sid}/nodes/${paperId}/restore`, { method: "POST" }),
 
   expansion: (sid: number, jobId: number) =>
     request<JobStatus>(`/api/sessions/${sid}/expansions/${jobId}`),

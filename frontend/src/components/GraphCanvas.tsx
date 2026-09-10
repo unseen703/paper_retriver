@@ -28,6 +28,7 @@ import {
   isVisibleAt,
   matchesQuery,
   navigableNodes,
+  nodeRepulsion,
   positionsToSave,
   type SavedPosition,
 } from "./graphInteraction";
@@ -967,9 +968,11 @@ function runLayout(
         onSettled();
       },
       idealEdgeLength: () => IDEAL_EDGE_LENGTH,
-      // Seeds push harder, so the clusters they anchor stay apart.
-      nodeRepulsion: (node: cytoscape.NodeSingular) =>
-        node.data("state") === "SEED" ? 20000 : 6000,
+      // Seeds AND liked papers push harder, so the clusters they anchor stay
+      // apart from each other and from the candidate cloud around them --
+      // otherwise the papers that matter most get buried in the densest part
+      // of the graph, which is exactly where you can least afford it.
+      nodeRepulsion: (node: cytoscape.NodeSingular) => nodeRepulsion(node.data("state")),
       nodeSeparation: 90,
       numIter: 2500,
     ...(pinned.length ? { fixedNodeConstraint: pinned } : {}),

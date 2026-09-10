@@ -81,6 +81,125 @@ class GraphResponse(BaseModel):
     meta: GraphMeta
 
 
+class StatsResponse(BaseModel):
+    """
+    `<StatsPanel>` v1 (R2.13).
+
+    Deliberately no `pagerank`. BUILD.md defers it to R3, and a field that
+    exists and is always null invites a panel to render an empty row for a
+    metric nobody has computed -- the shape should say what is available.
+    """
+
+    node_count: int
+    edge_count: int = Field(
+        description=(
+            "Edges with both endpoints in this graph. An edge into a boundary"
+            " paper is real and structurally useful, but the panel sits beside"
+            " a picture that does not draw it."
+        )
+    )
+    by_state: dict[str, int] = Field(
+        description="Every state, including the ones at zero, so a row is never missing."
+    )
+    components: int = Field(description="Connected pieces of the undirected projection.")
+    avg_degree: float = Field(
+        ge=0.0, description="2E/N -- each edge counts at both of its endpoints."
+    )
+    density: float = Field(
+        ge=0.0,
+        le=1.0,
+        description=(
+            "2E / (N(N-1)), against the undirected maximum. Bounded here on"
+            " purpose: a density above 1.0 is arithmetically impossible, so if"
+            " one is ever computed it means the edge count and the node count"
+            " came from different reads -- and a loud 500 beats shipping an"
+            " absurd number to a panel nobody would think to doubt."
+        ),
+    )
+    crawl_completeness: float = Field(
+        ge=0.0,
+        le=1.0,
+        description=(
+            "|non-stub| / |nodes|. PLAN.md section I: PageRank over a partially"
+            " crawled graph is biased, and R3 suppresses that column below 0.6."
+        ),
+    )
+
+
+class ClearGraphResponse(BaseModel):
+    """What a clear actually did (R2.15)."""
+
+    cleared: int = Field(
+        description=(
+            "Nodes removed from this session's graph. The corpus -- papers,"
+            " authors, edges, cached responses -- is untouched: that is what"
+            " the API budget bought, and it is shared across sessions."
+        )
+    )
+
+
+class ReviewPaperOut(BaseModel):
+    """One row of the review drawer (R2.14)."""
+
+    paper_id: int
+    title: str
+    reason_code: str = Field(
+        description=(
+            "Why it is absent. A filter reason for the Quarantined and Rejected"
+            " tabs; the event type (REMOVED | GC_SWEPT) for Removed."
+        )
+    )
+    stage: str = Field(
+        description=(
+            "Which filter stage decided, or for a removal the actor -- USER for"
+            " a removal you asked for, SYSTEM for one the sweep drew from it."
+        )
+    )
+    year: int | None = None
+
+
+class ReasonCount(BaseModel):
+    """How many papers one reason accounts for. Largest first."""
+
+    reason_code: str
+    count: int
+
+
+class ReviewBucketOut(BaseModel):
+    """
+    One tab.
+
+    `total` and `by_reason` are complete; `papers` is a capped sample. A mature
+    corpus rejects thousands of papers, and materialising all of them to render
+    a drawer would make this slowest exactly when the graph is interesting.
+    """
+
+    total: int
+    by_reason: list[ReasonCount] = Field(default_factory=list)
+    papers: list[ReviewPaperOut] = Field(default_factory=list)
+    truncated: bool = Field(
+        default=False,
+        description=(
+            "True when `papers` is a sample of `total`. Stated rather than left"
+            " for the client to infer from a suspiciously round number."
+        ),
+    )
+
+
+class ReviewResponse(BaseModel):
+    """
+    The three tabs, always all three (R2.14).
+
+    Three different kinds of absence. Quarantine is "probably applied ML but I
+    am not sure", which PLAN.md notes is most of the hard cases -- folding it
+    into Rejected would bury exactly the papers most worth a human glance.
+    """
+
+    quarantined: ReviewBucketOut
+    rejected: ReviewBucketOut
+    removed: ReviewBucketOut
+
+
 class NodePosition(BaseModel):
     """Where one node sits, as the client laid it out (R2.12)."""
 
@@ -136,12 +255,18 @@ class SavePositionsResponse(BaseModel):
 
 
 __all__ = [
+    "ClearGraphResponse",
     "GraphEdgeOut",
     "GraphMeta",
     "GraphNodeOut",
     "GraphResponse",
     "NodePosition",
     "Position",
+    "ReasonCount",
+    "ReviewBucketOut",
+    "ReviewPaperOut",
+    "ReviewResponse",
     "SavePositionsRequest",
     "SavePositionsResponse",
+    "StatsResponse",
 ]

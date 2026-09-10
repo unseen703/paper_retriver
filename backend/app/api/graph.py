@@ -37,17 +37,26 @@ from app.api.deps import existing_session, get_engine
 from app.config import filters
 from app.models import NODE_STATES
 from app.repo import edges as edges_repo
+from app.repo import events as events_repo
 from app.repo import graph as graph_repo
 from app.repo import papers as papers_repo
 from app.schemas.graph import (
+    ClearGraphResponse,
     GraphEdgeOut,
     GraphMeta,
     GraphNodeOut,
     GraphResponse,
     Position,
+    ReasonCount,
+    ReviewBucketOut,
+    ReviewPaperOut,
+    ReviewResponse,
     SavePositionsRequest,
     SavePositionsResponse,
+    StatsResponse,
 )
+from app.services.review import DEFAULT_LIMIT, MAX_LIMIT, ReviewBucket, build_review
+from app.services.stats import compute_stats
 
 logger = logging.getLogger(__name__)
 
@@ -189,6 +198,124 @@ def save_positions(
             saved,
         )
     return SavePositionsResponse(saved=saved)
+
+
+@router.get("/{sid}/stats", response_model=StatsResponse)
+def get_stats(
+    sid: Annotated[int, Depends(existing_session)],
+    engine: Annotated[Engine, Depends(get_engine)],
+) -> StatsResponse:
+    """
+    What is actually in this session's graph (R2.13).
+
+    A server endpoint rather than arithmetic in the panel, because BUILD.md's
+    verification is "counts match the DB". `GET /graph` can be filtered by
+    state, and a panel totalling a filtered response would confidently report a
+    subset as the whole -- a failure whose symptom is that everything looks
+    fine.
+    """
+    with engine.connect() as conn:
+        stats = compute_stats(conn, sid)
+    return StatsResponse(
+        node_count=stats.node_count,
+        edge_count=stats.edge_count,
+        by_state=stats.by_state,
+        components=stats.components,
+        avg_degree=stats.avg_degree,
+        density=stats.density,
+        crawl_completeness=stats.crawl_completeness,
+    )
+
+
+def _bucket(bucket: ReviewBucket) -> ReviewBucketOut:
+    return ReviewBucketOut(
+        total=bucket.total,
+        by_reason=[ReasonCount(reason_code=code, count=n) for code, n in bucket.by_reason],
+        papers=[
+            ReviewPaperOut(
+                paper_id=p.paper_id,
+                title=p.title,
+                reason_code=p.reason_code,
+                stage=p.stage,
+                year=p.year,
+            )
+            for p in bucket.papers
+        ],
+        truncated=bucket.truncated,
+    )
+
+
+@router.get("/{sid}/review", response_model=ReviewResponse)
+def get_review(
+    sid: Annotated[int, Depends(existing_session)],
+    engine: Annotated[Engine, Depends(get_engine)],
+    limit: Annotated[
+        int,
+        Query(ge=1, le=MAX_LIMIT, description="Rows per tab. Counts stay complete regardless."),
+    ] = DEFAULT_LIMIT,
+) -> ReviewResponse:
+    """
+    What the graph is not showing you, and why (R2.14).
+
+    PLAN.md M5: "A filter you cannot audit is a filter you cannot tune, and you
+    will silently discard good papers for weeks without noticing."
+    """
+    with engine.connect() as conn:
+        review = build_review(conn, sid, limit)
+    return ReviewResponse(
+        quarantined=_bucket(review["quarantined"]),
+        rejected=_bucket(review["rejected"]),
+        removed=_bucket(review["removed"]),
+    )
+
+
+@router.delete("/{sid}/graph", response_model=ClearGraphResponse)
+def clear_graph(
+    sid: Annotated[int, Depends(existing_session)],
+    engine: Annotated[Engine, Depends(get_engine)],
+    confirm: Annotated[
+        bool,
+        Query(description="Must be true. Absent or false is a 400 -- see below."),
+    ] = False,
+) -> ClearGraphResponse:
+    """
+    Empty this session's graph (R2.15).
+
+    **`confirm` is required and there is no default that fires.** A DELETE that
+    goes off on a stray click is a different feature from one that makes you
+    say what you mean, and the difference only shows up on the day you did not
+    mean it. `confirm=false` is refused too: a caller saying no should not be
+    read as a caller saying nothing.
+
+    Graph membership only. The corpus is what the API budget bought and it is
+    shared between sessions, so seeding the same papers again afterwards costs
+    nothing. The event log survives as well -- it is append-only and it is the
+    audit trail -- and a `CLEARED` event is appended, so the clear is recorded
+    rather than being the one action that leaves no trace.
+    """
+    if not confirm:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "clearing the graph requires ?confirm=true;"
+                " this removes every node in the session (the corpus is kept)"
+            ),
+        )
+
+    with engine.begin() as conn:
+        # Read the ids before deleting: the log records what left, and after
+        # the DELETE there is nothing left to ask.
+        leaving = sorted(graph_repo.get_node_ids(conn, sid))
+        cleared = graph_repo.clear_session(conn, sid)
+        for paper_id in leaving:
+            # One event per paper rather than a single session-level row.
+            # `interaction_events.paper_id` has a foreign key, so there is no
+            # id meaning "the whole session" -- and per paper is the truer
+            # record regardless: each of these genuinely left the graph.
+            events_repo.append_event(conn, sid, paper_id, "CLEARED", actor="USER")
+
+    logger.info("graph_cleared session=%s cleared=%s", sid, cleared)
+    return ClearGraphResponse(cleared=cleared)
 
 
 __all__ = ["router"]

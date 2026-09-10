@@ -8,6 +8,10 @@ import { AddPaperDialog } from "./components/AddPaperDialog";
 import { ExpansionControls } from "./components/ExpansionControls";
 import { NodeInspector, type Neighbour } from "./components/NodeInspector";
 import { ViewControls } from "./components/ViewControls";
+import { StatsPanel } from "./components/StatsPanel";
+import { ReviewDrawer } from "./components/ReviewDrawer";
+import { ClearGraphDialog } from "./components/ClearGraphDialog";
+import { SessionSwitcher } from "./components/SessionSwitcher";
 import type { LabelMode } from "./components/stylesheet";
 import { clampThreshold, type SavedPosition } from "./components/graphInteraction";
 
@@ -29,9 +33,12 @@ export default function App() {
   const sessionId = useView((s) => s.sessionId);
   const selectedId = useView((s) => s.selectedId);
   const setSelected = useView((s) => s.setSelected);
+  const setSession = useView((s) => s.setSession);
 
   const [showFixture, setShowFixture] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [clearOpen, setClearOpen] = useState(false);
   const [hoveredId, setHoveredId] = useState<number | null>(null);
   const [relayoutToken, setRelayoutToken] = useState(0);
   const [resetViewToken, setResetViewToken] = useState(0);
@@ -168,7 +175,31 @@ export default function App() {
           <button onClick={() => setDialogOpen(true)} disabled={showFixture}>
             + Add paper
           </button>
+          {/* R2.16. First in the toolbar: everything to its right operates on
+              whichever session this names. */}
+          <SessionSwitcher sessionId={sessionId} onSwitch={setSession} />
           <ExpansionControls sessionId={sessionId} disabled={showFixture} />
+          {/* R2.14. The drawer is where a filter stops being a black box, so
+              it needs to be one click away rather than buried. */}
+          {/* R2.15. Destructive, so it sits after the constructive controls
+              and opens a dialog rather than acting on the click. */}
+          <button
+            type="button"
+            onClick={() => setClearOpen(true)}
+            disabled={showFixture || nodes.length === 0}
+            title="Empty this graph — the papers already fetched are kept"
+          >
+            Clear
+          </button>
+          <button
+            type="button"
+            onClick={() => setReviewOpen((was) => !was)}
+            disabled={showFixture}
+            aria-expanded={reviewOpen}
+            title="What the filters set aside, and what you removed"
+          >
+            Review
+          </button>
           <button onClick={() => setRelayoutToken((t) => t + 1)} title="Re-run the layout">
             Tidy
           </button>
@@ -227,11 +258,38 @@ export default function App() {
         />
 
           <p style={hintStyle}>drag to move · scroll to zoom · hover to trace · click to inspect</p>
+
+          {/* R2.13. Bottom-left, opposite the hint and clear of the inspector,
+              which opens on the right. It is a reference readout rather than a
+              control, so it sits out of the way rather than in the toolbar. */}
+          <div style={statsAnchorStyle}>
+            <StatsPanel sessionId={sessionId} disabled={showFixture} />
+          </div>
         </div>
 
         {/* The inspector is the detail query's only consumer now, so selecting
             a node fetches once and renders everything rather than fetching to
             show three author names in the footer. */}
+        {!showFixture && clearOpen && (
+          <ClearGraphDialog
+            sessionId={sessionId}
+            nodeCount={nodes.length}
+            onClose={() => setClearOpen(false)}
+            // The selection is an id into a graph that no longer exists.
+            onCleared={() => setSelected(null)}
+          />
+        )}
+
+        {!showFixture && reviewOpen && (
+          <ReviewDrawer
+            sessionId={sessionId}
+            onClose={() => setReviewOpen(false)}
+            // Select the restored paper so the click is visibly not a no-op:
+            // the graph refetches and the node it brought back is highlighted.
+            onSelect={setSelected}
+          />
+        )}
+
         {!showFixture && selectedId != null && (
           <NodeInspector
             sessionId={sessionId}
@@ -353,6 +411,19 @@ const footerStyle: React.CSSProperties = {
   whiteSpace: "nowrap",
   overflow: "hidden",
   textOverflow: "ellipsis",
+};
+
+const statsAnchorStyle: React.CSSProperties = {
+  position: "absolute",
+  left: 12,
+  bottom: 34,
+  padding: "8px 10px",
+  borderRadius: 6,
+  // Same translucent slate as the other floating chrome, so the panel reads as
+  // part of the canvas furniture rather than a card dropped on top of it.
+  background: "rgba(26, 32, 44, 0.82)",
+  border: "1px solid var(--line, #2d3748)",
+  pointerEvents: "auto",
 };
 
 const hintStyle: React.CSSProperties = {

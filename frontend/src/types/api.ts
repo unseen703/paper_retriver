@@ -4,6 +4,40 @@
  */
 
 export interface paths {
+    "/api/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Sessions
+         * @description Every session, oldest first, each with the size of its graph.
+         *
+         *     The node count is what makes a switcher usable: without it every row looks
+         *     identical, and the session holding your work is indistinguishable from the
+         *     empty one you made by accident.
+         *
+         *     Ordered by id rather than by name or recency -- a list someone reads
+         *     top-down should not reshuffle as they add to it (CLAUDE.md rule 7).
+         */
+        get: operations["list_sessions_api_sessions_get"];
+        put?: never;
+        /**
+         * Create Session
+         * @description Start a new, empty graph over the same corpus.
+         *
+         *     Nothing is copied from any existing session -- that is the point. The
+         *     papers are already there; the opinions are not.
+         */
+        post: operations["create_session_api_sessions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/{sid}/search": {
         parameters: {
             query?: never;
@@ -133,7 +167,23 @@ export interface paths {
         get: operations["get_graph_api_sessions__sid__graph_get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Clear Graph
+         * @description Empty this session's graph (R2.15).
+         *
+         *     **`confirm` is required and there is no default that fires.** A DELETE that
+         *     goes off on a stray click is a different feature from one that makes you
+         *     say what you mean, and the difference only shows up on the day you did not
+         *     mean it. `confirm=false` is refused too: a caller saying no should not be
+         *     read as a caller saying nothing.
+         *
+         *     Graph membership only. The corpus is what the API budget bought and it is
+         *     shared between sessions, so seeding the same papers again afterwards costs
+         *     nothing. The event log survives as well -- it is append-only and it is the
+         *     audit trail -- and a `CLEARED` event is appended, so the clear is recorded
+         *     rather than being the one action that leaves no trace.
+         */
+        delete: operations["clear_graph_api_sessions__sid__graph_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -167,6 +217,55 @@ export interface paths {
          *     the skip visible instead of silent.
          */
         put: operations["save_positions_api_sessions__sid__positions_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{sid}/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Stats
+         * @description What is actually in this session's graph (R2.13).
+         *
+         *     A server endpoint rather than arithmetic in the panel, because BUILD.md's
+         *     verification is "counts match the DB". `GET /graph` can be filtered by
+         *     state, and a panel totalling a filtered response would confidently report a
+         *     subset as the whole -- a failure whose symptom is that everything looks
+         *     fine.
+         */
+        get: operations["get_stats_api_sessions__sid__stats_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{sid}/review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Review
+         * @description What the graph is not showing you, and why (R2.14).
+         *
+         *     PLAN.md M5: "A filter you cannot audit is a filter you cannot tune, and you
+         *     will silently discard good papers for weeks without noticing."
+         */
+        get: operations["get_review_api_sessions__sid__review_get"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -255,6 +354,25 @@ export interface components {
              * @default false
              */
             force: boolean;
+        };
+        /**
+         * ClearGraphResponse
+         * @description What a clear actually did (R2.15).
+         */
+        ClearGraphResponse: {
+            /**
+             * Cleared
+             * @description Nodes removed from this session's graph. The corpus -- papers, authors, edges, cached responses -- is untouched: that is what the API budget bought, and it is shared across sessions.
+             */
+            cleared: number;
+        };
+        /**
+         * CreateSessionRequest
+         * @description Start a new, empty graph over the same corpus.
+         */
+        CreateSessionRequest: {
+            /** Name */
+            name: string;
         };
         /**
          * ExpandRequest
@@ -708,6 +826,16 @@ export interface components {
             y: number;
         };
         /**
+         * ReasonCount
+         * @description How many papers one reason accounts for. Largest first.
+         */
+        ReasonCount: {
+            /** Reason Code */
+            reason_code: string;
+            /** Count */
+            count: number;
+        };
+        /**
          * RejectedResponse
          * @description The 422 body, wrapped in FastAPI's standard error envelope.
          *
@@ -774,6 +902,63 @@ export interface components {
             gc_swept: number[];
         };
         /**
+         * ReviewBucketOut
+         * @description One tab.
+         *
+         *     `total` and `by_reason` are complete; `papers` is a capped sample. A mature
+         *     corpus rejects thousands of papers, and materialising all of them to render
+         *     a drawer would make this slowest exactly when the graph is interesting.
+         */
+        ReviewBucketOut: {
+            /** Total */
+            total: number;
+            /** By Reason */
+            by_reason?: components["schemas"]["ReasonCount"][];
+            /** Papers */
+            papers?: components["schemas"]["ReviewPaperOut"][];
+            /**
+             * Truncated
+             * @description True when `papers` is a sample of `total`. Stated rather than left for the client to infer from a suspiciously round number.
+             * @default false
+             */
+            truncated: boolean;
+        };
+        /**
+         * ReviewPaperOut
+         * @description One row of the review drawer (R2.14).
+         */
+        ReviewPaperOut: {
+            /** Paper Id */
+            paper_id: number;
+            /** Title */
+            title: string;
+            /**
+             * Reason Code
+             * @description Why it is absent. A filter reason for the Quarantined and Rejected tabs; the event type (REMOVED | GC_SWEPT) for Removed.
+             */
+            reason_code: string;
+            /**
+             * Stage
+             * @description Which filter stage decided, or for a removal the actor -- USER for a removal you asked for, SYSTEM for one the sweep drew from it.
+             */
+            stage: string;
+            /** Year */
+            year?: number | null;
+        };
+        /**
+         * ReviewResponse
+         * @description The three tabs, always all three (R2.14).
+         *
+         *     Three different kinds of absence. Quarantine is "probably applied ML but I
+         *     am not sure", which PLAN.md notes is most of the hard cases -- folding it
+         *     into Rejected would bury exactly the papers most worth a human glance.
+         */
+        ReviewResponse: {
+            quarantined: components["schemas"]["ReviewBucketOut"];
+            rejected: components["schemas"]["ReviewBucketOut"];
+            removed: components["schemas"]["ReviewBucketOut"];
+        };
+        /**
          * SavePositionsRequest
          * @description A whole arrangement in one request (R2.12).
          *
@@ -829,6 +1014,67 @@ export interface components {
             previously_removed: boolean;
         };
         /**
+         * SessionOut
+         * @description One workspace, as the switcher lists it.
+         */
+        SessionOut: {
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
+            /** Created At */
+            created_at: string;
+            /**
+             * Node Count
+             * @description Papers in this session's graph. Without it every row in the switcher looks the same, and the session holding your work is indistinguishable from the empty one you made by accident.
+             */
+            node_count: number;
+        };
+        /**
+         * StatsResponse
+         * @description `<StatsPanel>` v1 (R2.13).
+         *
+         *     Deliberately no `pagerank`. BUILD.md defers it to R3, and a field that
+         *     exists and is always null invites a panel to render an empty row for a
+         *     metric nobody has computed -- the shape should say what is available.
+         */
+        StatsResponse: {
+            /** Node Count */
+            node_count: number;
+            /**
+             * Edge Count
+             * @description Edges with both endpoints in this graph. An edge into a boundary paper is real and structurally useful, but the panel sits beside a picture that does not draw it.
+             */
+            edge_count: number;
+            /**
+             * By State
+             * @description Every state, including the ones at zero, so a row is never missing.
+             */
+            by_state: {
+                [key: string]: number;
+            };
+            /**
+             * Components
+             * @description Connected pieces of the undirected projection.
+             */
+            components: number;
+            /**
+             * Avg Degree
+             * @description 2E/N -- each edge counts at both of its endpoints.
+             */
+            avg_degree: number;
+            /**
+             * Density
+             * @description 2E / (N(N-1)), against the undirected maximum. Bounded here on purpose: a density above 1.0 is arithmetically impossible, so if one is ever computed it means the edge count and the node count came from different reads -- and a loud 500 beats shipping an absurd number to a panel nobody would think to doubt.
+             */
+            density: number;
+            /**
+             * Crawl Completeness
+             * @description |non-stub| / |nodes|. PLAN.md section I: PageRank over a partially crawled graph is biased, and R3 suppresses that column below 0.6.
+             */
+            crawl_completeness: number;
+        };
+        /**
          * TransitionRefusedDetail
          * @description Why the state machine refused, in the shape the UI branches on.
          */
@@ -864,6 +1110,59 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_sessions_api_sessions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionOut"][];
+                };
+            };
+        };
+    };
+    create_session_api_sessions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     search_api_sessions__sid__search_get: {
         parameters: {
             query: {
@@ -1123,6 +1422,41 @@ export interface operations {
             };
         };
     };
+    clear_graph_api_sessions__sid__graph_delete: {
+        parameters: {
+            query?: {
+                /** @description Must be true. Absent or false is a 400 -- see below. */
+                confirm?: boolean;
+            };
+            header?: never;
+            path: {
+                /** @description Session id. */
+                sid: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClearGraphResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     save_positions_api_sessions__sid__positions_put: {
         parameters: {
             query?: never;
@@ -1146,6 +1480,73 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SavePositionsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_stats_api_sessions__sid__stats_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session id. */
+                sid: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_review_api_sessions__sid__review_get: {
+        parameters: {
+            query?: {
+                /** @description Rows per tab. Counts stay complete regardless. */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Session id. */
+                sid: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewResponse"];
                 };
             };
             /** @description Validation Error */

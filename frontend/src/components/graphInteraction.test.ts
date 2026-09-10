@@ -19,7 +19,13 @@
  */
 import { describe, expect, it } from "vitest";
 import type { GraphNodeOut } from "../api/client";
-import { clampThreshold, navigableNodes, partitionByQuery, positionsToSave } from "./graphInteraction";
+import {
+  clampThreshold,
+  navigableNodes,
+  nodeRepulsion,
+  partitionByQuery,
+  positionsToSave,
+} from "./graphInteraction";
 
 function node(id: number, over: Partial<GraphNodeOut> = {}): GraphNodeOut {
   return {
@@ -187,5 +193,28 @@ describe("positionsToSave", () => {
 
   it("returns an empty list for an empty graph rather than throwing", () => {
     expect(positionsToSave([])).toEqual([]);
+  });
+});
+
+describe("nodeRepulsion", () => {
+  it("pushes a seed harder than a plain candidate", () => {
+    expect(nodeRepulsion("SEED")).toBeGreaterThan(nodeRepulsion("CANDIDATE"));
+  });
+
+  it("gives a liked paper the same push as a seed", () => {
+    // The reported gap: seeds already anchored their clusters apart, but a
+    // liked paper got the candidate-cloud default and ended up buried in the
+    // densest part of the graph -- exactly the paper you can least afford to
+    // lose track of.
+    expect(nodeRepulsion("LIKED")).toBe(nodeRepulsion("SEED"));
+  });
+
+  it("leaves disliked papers at the default push", () => {
+    expect(nodeRepulsion("DISLIKED")).toBe(nodeRepulsion("CANDIDATE"));
+  });
+
+  it("falls back to the default for a missing state rather than throwing", () => {
+    expect(nodeRepulsion(null)).toBe(nodeRepulsion("CANDIDATE"));
+    expect(nodeRepulsion(undefined)).toBe(nodeRepulsion("CANDIDATE"));
   });
 });
