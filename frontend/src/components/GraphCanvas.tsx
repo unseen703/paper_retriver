@@ -25,12 +25,14 @@ import fcose from "cytoscape-fcose";
 import cola from "cytoscape-cola";
 import type { GraphEdgeOut, GraphNodeOut } from "../api/client";
 import {
+  inTopicGroup,
   isVisibleAt,
   matchesQuery,
   navigableNodes,
   nodeRepulsion,
   positionsToSave,
   type SavedPosition,
+  type TopicGroup,
 } from "./graphInteraction";
 import {
   type LabelMode,
@@ -136,6 +138,10 @@ export interface GraphCanvasProps {
   scoreThreshold?: number;
   /** Title substring to highlight; empty clears. */
   searchQuery?: string;
+  /** Show only this topic group; the rest dim. R3 topic filter. */
+  topicGroup?: TopicGroup;
+  /** Reports how many nodes are in the chosen topic group. */
+  onTopicCount?: (matches: number) => void;
   /** Reports how many nodes survive the score filter, for the readout. */
   onVisibleCount?: (visible: number, total: number) => void;
   /** Reports how many nodes match the search. */
@@ -161,6 +167,8 @@ export function GraphCanvas({
   labelMode = "relevant",
   scoreThreshold = 0,
   searchQuery = "",
+  topicGroup = "all",
+  onTopicCount,
   onPositions,
   onVisibleCount,
   onMatchCount,
@@ -798,6 +806,29 @@ export function GraphCanvas({
     instance.nodes().difference(matched).addClass("searchFade");
     onMatchCount?.(matched.length);
   }, [nodes, searchQuery, onMatchCount]);
+
+  // --- topic filter --------------------------------------------------------
+  //
+  // Dims everything outside the chosen group rather than removing it. The
+  // graph's shape is the point: hiding the CS half would leave the chemistry
+  // papers floating with their edges cut, which says less than showing them
+  // attached to a faded background.
+  useEffect(() => {
+    const instance = cy.current;
+    if (!instance) return;
+    instance.nodes().removeClass("topicFade");
+    if (topicGroup === "all") {
+      onTopicCount?.(instance.nodes().length);
+      return;
+    }
+    const inGroup = instance
+      .nodes()
+      .filter((node) =>
+        inTopicGroup(node.data("category"), topicGroup, String(node.data("title") ?? "")),
+      );
+    instance.nodes().difference(inGroup).addClass("topicFade");
+    onTopicCount?.(inGroup.length);
+  }, [nodes, topicGroup, onTopicCount]);
 
   // --- reset zoom ----------------------------------------------------------
   useEffect(() => {

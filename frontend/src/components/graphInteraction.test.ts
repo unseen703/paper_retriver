@@ -25,6 +25,8 @@ import {
   nodeRepulsion,
   partitionByQuery,
   positionsToSave,
+  inTopicGroup,
+  partitionByTopic,
 } from "./graphInteraction";
 
 function node(id: number, over: Partial<GraphNodeOut> = {}): GraphNodeOut {
@@ -216,5 +218,68 @@ describe("nodeRepulsion", () => {
   it("falls back to the default for a missing state rather than throwing", () => {
     expect(nodeRepulsion(null)).toBe(nodeRepulsion("CANDIDATE"));
     expect(nodeRepulsion(undefined)).toBe(nodeRepulsion("CANDIDATE"));
+  });
+});
+
+describe("inTopicGroup", () => {
+  it("shows everything under 'all'", () => {
+    expect(inTopicGroup("cs.LG", "all")).toBe(true);
+    expect(inTopicGroup("physics.chem-ph", "all")).toBe(true);
+    expect(inTopicGroup(null, "all")).toBe(true);
+  });
+
+  it("puts ordinary machine learning in cs", () => {
+    expect(inTopicGroup("cs.LG", "cs", "Attention is all you need")).toBe(true);
+    expect(inTopicGroup("stat.ML", "cs", "Variational inference")).toBe(true);
+  });
+
+  it("recognises chemistry by its category", () => {
+    expect(inTopicGroup("physics.chem-ph", "chem", "Density functional theory")).toBe(true);
+    expect(inTopicGroup("q-bio.QM", "chem", "Protein assay")).toBe(true);
+  });
+
+  it("recognises chemistry by vocabulary even under a CS category", () => {
+    // The correction the real graph forced. A session of 104 retrosynthesis
+    // papers held zero chemistry categories -- every one was cs.LG, which is
+    // arXiv's correct filing for machine learning about chemistry. Grouping by
+    // category alone put all 104 under "CS" and left "chemistry" empty.
+    expect(inTopicGroup("cs.LG", "chem", "Retrosynthesis with graph networks")).toBe(true);
+    expect(
+      inTopicGroup("cs.AI", "chem", "Predicting Organic Reaction Outcomes"),
+    ).toBe(true);
+  });
+
+  it("gives chemistry precedence when a paper is both", () => {
+    // The more specific fact wins, matching the backend filter where the
+    // reaction-ML rescue runs before the category rules. Filing a cs.LG
+    // retrosynthesis paper under CS would empty the tab that exists to find it.
+    const title = "Retrosynthesis prediction";
+    expect(inTopicGroup("cs.LG", "chem", title)).toBe(true);
+    expect(inTopicGroup("cs.LG", "cs", title)).toBe(false);
+  });
+
+  it("keeps ordinary ML out of chemistry", () => {
+    expect(inTopicGroup("cs.LG", "chem", "Attention is all you need")).toBe(false);
+    expect(inTopicGroup("cs.CL", "chem", "Neural machine translation")).toBe(false);
+  });
+
+  it("treats a node with neither signal as belonging to no group", () => {
+    expect(inTopicGroup(null, "cs", "Some journal paper")).toBe(false);
+    expect(inTopicGroup(null, "chem", "Some journal paper")).toBe(false);
+  });
+
+  it("splits a graph into matched and dimmed", () => {
+    const nodes = [
+      { id: 1, primary_arxiv_category: "cs.LG", title: "Attention is all you need" },
+      { id: 2, primary_arxiv_category: "cs.LG", title: "Retrosynthesis with GNNs" },
+      { id: 3, primary_arxiv_category: null, title: "Untitled" },
+    ];
+    expect(partitionByTopic(nodes, "chem")).toEqual({ matched: [2], rest: [1, 3] });
+    expect(partitionByTopic(nodes, "cs")).toEqual({ matched: [1], rest: [2, 3] });
+  });
+
+  it("matches everything when the filter is off", () => {
+    const nodes = [{ id: 1, primary_arxiv_category: "cs.LG", title: "x" }];
+    expect(partitionByTopic(nodes, "all")).toEqual({ matched: [1], rest: [] });
   });
 });

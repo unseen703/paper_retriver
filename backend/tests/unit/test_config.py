@@ -212,7 +212,12 @@ def test_config_version_is_sha256_of_file_contents() -> None:
     expected = hashlib.sha256(FILTERS_YAML.read_bytes()).hexdigest()
     assert expected.startswith(filters.config_version)
     assert len(filters.config_version) == 12
-    assert filters.config_version.islower()
+    # Lowercase hex, checked against the alphabet rather than with `islower()`.
+    # `islower()` is False for a string with no cased characters, so an
+    # all-digit hash -- about a 0.5% chance for 12 hex characters -- failed
+    # this assertion despite being perfectly valid. One did, which is how the
+    # bug was found.
+    assert set(filters.config_version) <= set("0123456789abcdef")
 
 
 def test_filters_and_ranking_have_independent_versions() -> None:

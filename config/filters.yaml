@@ -15,10 +15,47 @@ APPLIED_DENY: [cs.CV, cs.RO, cs.SE, cs.HC, cs.CR, cs.DB, cs.NI, cs.SD,
 CORE_VENUES: [NeurIPS, ICML, ICLR, ACL, EMNLP, NAACL, AAAI, IJCAI,
               COLT, AISTATS, TMLR, JMLR, COLM, EACL, CoNLL]
 
+# Machine learning applied to chemical reactions -- retrosynthesis, reaction and
+# reactivity prediction. Checked BEFORE the category rules, because the papers
+# live under physics.chem-ph and q-bio, which APPLIED_DENY refuses.
+#
+# The wanted set is an intersection, not a category: most of physics.chem-ph is
+# spectroscopy and electronic structure and does not belong here, while the
+# retrosynthesis literature publishes into chemistry venues and would be missed
+# by a cs-only rule. These terms *are* the intersection -- a paper about
+# retrosynthesis is essentially always a machine-learning paper.
+#
+# Precision matters more than recall. A looser list ("reaction", "molecule",
+# "prediction") admits all of computational chemistry through a door meant for
+# a corridor of it, and the symptom is a graph that slowly fills with papers
+# nobody wanted. Every entry here is a term of art rather than a common word.
+reaction_ml_keywords:
+  - retrosynth            # retrosynthesis, retrosynthetic
+  - reaction prediction
+  - reaction outcome
+  - reactivity prediction
+  - reaction yield
+  - yield prediction
+  - synthesis planning
+  - synthesis prediction
+  - reaction condition
+  - catalyst design
+  - chemical reaction network
+
+# Applied-AI vocabulary for the APPLIED cascade stage (PLAN.md Appendix A).
+# A hit QUARANTINES, never auto-rejects.
+#
+# The chemistry terms are gone: this list used to carry 'molecul', 'protein
+# folding' and 'drug discovery', which penalised exactly the vocabulary the
+# reaction_ml_keywords above are meant to admit. The two would have pulled in
+# opposite directions the moment the APPLIED stage was built.
+#
+# The rest stay. Clinical, financial and agricultural applications are a
+# different question from chemistry, and PLAN.md still wants them held for
+# review.
 applied_keywords: [clinical, patient, radiolog, EHR, diagnosis, crop, agricultur,
-                   portfolio, stock return, credit risk, seismic, protein folding,
-                   molecul, drug discovery, wafer, churn, fraud detection]
-# keyword hits QUARANTINE only, never auto-reject
+                   portfolio, stock return, credit risk, seismic,
+                   wafer, churn, fraud detection]
 
 forward_expand_max: 2000
 max_reference_fetch: 200

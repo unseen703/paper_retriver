@@ -4,6 +4,32 @@
  */
 
 export interface paths {
+    "/api/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Config
+         * @description The active weights. A ranking you cannot inspect is one you cannot tune.
+         */
+        get: operations["get_config_api_config_get"];
+        /**
+         * Update Config
+         * @description Replace some weights and re-rank every graph from persisted features.
+         *
+         *     No API calls and no feature recomputation -- see the module docstring.
+         */
+        put: operations["update_config_api_config_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions": {
         parameters: {
             query?: never;
@@ -367,6 +393,31 @@ export interface components {
             cleared: number;
         };
         /**
+         * ConfigResponse
+         * @description The active weights, and where they came from.
+         */
+        ConfigResponse: {
+            /** Weights */
+            weights: {
+                [key: string]: number;
+            };
+            /**
+             * Config Version
+             * @description The version stamped into every expansion and filter decision -- how you tell which weights produced a given graph.
+             */
+            config_version: string;
+            /**
+             * Overridden
+             * @description True when the active weights differ from config/ranking.yaml because of a PUT. Overrides are in memory and reset on restart.
+             * @default false
+             */
+            overridden: boolean;
+        };
+        /** ConfigUpdateRequest */
+        ConfigUpdateRequest: {
+            weights?: components["schemas"]["WeightUpdate"];
+        };
+        /**
          * CreateSessionRequest
          * @description Start a new, empty graph over the same corpus.
          */
@@ -511,6 +562,8 @@ export interface components {
             citation_count?: number | null;
             /** Paper Type */
             paper_type?: string | null;
+            /** Primary Arxiv Category */
+            primary_arxiv_category?: string | null;
             /**
              * In Degree
              * @default 0
@@ -901,6 +954,29 @@ export interface components {
             /** Gc Swept */
             gc_swept: number[];
         };
+        /** RescoreResponse */
+        RescoreResponse: {
+            /** Weights */
+            weights: {
+                [key: string]: number;
+            };
+            /**
+             * Config Version
+             * @description The version stamped into every expansion and filter decision -- how you tell which weights produced a given graph.
+             */
+            config_version: string;
+            /**
+             * Overridden
+             * @description True when the active weights differ from config/ranking.yaml because of a PUT. Overrides are in memory and reset on restart.
+             * @default false
+             */
+            overridden: boolean;
+            /**
+             * Rescored
+             * @description Nodes rescored, across every session. Weights are global.
+             */
+            rescored: number;
+        };
         /**
          * ReviewBucketOut
          * @description One tab.
@@ -1101,6 +1177,35 @@ export interface components {
             /** Context */
             ctx?: Record<string, never>;
         };
+        /**
+         * WeightUpdate
+         * @description A partial weight update.
+         *
+         *     Every field optional so one number can move on its own; `extra="forbid"`
+         *     so a typo is a 422 rather than a silent no-op.
+         */
+        WeightUpdate: {
+            /** Ppr */
+            ppr?: number | null;
+            /** Cocite */
+            cocite?: number | null;
+            /** Bibcoup */
+            bibcoup?: number | null;
+            /** Overlap */
+            overlap?: number | null;
+            /** Quality */
+            quality?: number | null;
+            /** Recency */
+            recency?: number | null;
+            /** Venue */
+            venue?: number | null;
+            /** Author */
+            author?: number | null;
+            /** Dislike */
+            dislike?: number | null;
+            /** Hub */
+            hub?: number | null;
+        };
     };
     responses: never;
     parameters: never;
@@ -1110,6 +1215,59 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    get_config_api_config_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfigResponse"];
+                };
+            };
+        };
+    };
+    update_config_api_config_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfigUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RescoreResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_sessions_api_sessions_get: {
         parameters: {
             query?: never;

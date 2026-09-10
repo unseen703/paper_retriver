@@ -18,6 +18,25 @@
  * hand cannot vanish because it has no score.
  */
 import type { LabelMode } from "./stylesheet";
+import type { TopicGroup } from "./graphInteraction";
+
+/**
+ * The topic filter's three settings.
+ *
+ * Coarse buckets rather than a list of arXiv categories: the question is "show
+ * me the chemistry side of this graph", not "show me cond-mat.mtrl-sci". A
+ * dropdown of forty categories answers a question nobody asked while making
+ * the common one harder.
+ */
+const TOPICS: { value: TopicGroup; label: string; title: string }[] = [
+  { value: "all", label: "all", title: "Every paper in the graph" },
+  { value: "cs", label: "CS / ML", title: "cs.*, stat.*, math.* — the machine-learning side" },
+  {
+    value: "chem",
+    label: "chemistry",
+    title: "physics.*, q-bio.*, cond-mat.* — reaction and molecular work",
+  },
+];
 
 export interface ViewControlsProps {
   labelMode: LabelMode;
@@ -27,6 +46,10 @@ export interface ViewControlsProps {
   /** The graph's own score span, so the slider's travel is all usable. */
   scoreRange: { min: number; max: number };
   searchQuery: string;
+  topicGroup: TopicGroup;
+  onTopicGroup: (group: TopicGroup) => void;
+  /** How many nodes are in the chosen group, for the count beside the buttons. */
+  topicCount: number;
   onSearchQuery: (value: string) => void;
   onResetView: () => void;
   visible: number;
@@ -47,6 +70,9 @@ export function ViewControls({
   onScoreThreshold,
   scoreRange,
   searchQuery,
+  topicGroup,
+  onTopicGroup,
+  topicCount,
   onSearchQuery,
   onResetView,
   visible,
@@ -68,6 +94,28 @@ export function ViewControls({
             {mode.label}
           </button>
         ))}
+      </span>
+
+      {/* The topic filter. Beside `labels` because both answer "what am I
+          looking at", rather than `min score`, which answers "how much". */}
+      <span style={group}>
+        <span style={dim}>topic</span>
+        {TOPICS.map((topic) => (
+          <button
+            key={topic.value}
+            onClick={() => onTopicGroup(topic.value)}
+            title={topic.title}
+            aria-pressed={topicGroup === topic.value}
+            style={topicGroup === topic.value ? activeBtn : undefined}
+          >
+            {topic.label}
+          </button>
+        ))}
+        {topicGroup !== "all" && (
+          // The count is the useful part: a filter that shows nothing and a
+          // filter that is broken look identical without it.
+          <span style={dim}>{topicCount} shown</span>
+        )}
       </span>
 
       <span style={group}>

@@ -13,7 +13,11 @@ import { ReviewDrawer } from "./components/ReviewDrawer";
 import { ClearGraphDialog } from "./components/ClearGraphDialog";
 import { SessionSwitcher } from "./components/SessionSwitcher";
 import type { LabelMode } from "./components/stylesheet";
-import { clampThreshold, type SavedPosition } from "./components/graphInteraction";
+import {
+  clampThreshold,
+  type SavedPosition,
+  type TopicGroup,
+} from "./components/graphInteraction";
 
 /**
  * The shell around the canvas: a legend, a couple of view controls, and a
@@ -45,6 +49,8 @@ export default function App() {
   const [labelMode, setLabelMode] = useState<LabelMode>("relevant");
   const [scoreThreshold, setScoreThreshold] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [topicGroup, setTopicGroup] = useState<TopicGroup>("all");
+  const [topicCount, setTopicCount] = useState(0);
   const [visibleCount, setVisibleCount] = useState({ visible: 0, total: 0 });
   const [matchCount, setMatchCount] = useState(0);
 
@@ -55,6 +61,7 @@ export default function App() {
     [],
   );
   const handleMatches = useCallback((matches: number) => setMatchCount(matches), []);
+  const handleTopicCount = useCallback((matches: number) => setTopicCount(matches), []);
 
   /**
    * Persist the arrangement whenever the canvas says it settled (R2.12).
@@ -218,6 +225,9 @@ export default function App() {
           scoreRange={scoreRange}
           searchQuery={searchQuery}
           onSearchQuery={setSearchQuery}
+          topicGroup={topicGroup}
+          onTopicGroup={setTopicGroup}
+          topicCount={topicCount}
           onResetView={() => setResetViewToken((t) => t + 1)}
           visible={visibleCount.visible}
           total={visibleCount.total}
@@ -252,6 +262,8 @@ export default function App() {
           labelMode={labelMode}
           scoreThreshold={effectiveThreshold}
           searchQuery={searchQuery}
+          topicGroup={topicGroup}
+          onTopicCount={handleTopicCount}
           onVisibleCount={handleVisible}
           onMatchCount={handleMatches}
           onPositions={handlePositions}
