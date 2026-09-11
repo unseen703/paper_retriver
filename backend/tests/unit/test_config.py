@@ -89,11 +89,19 @@ def test_year_floor_is_2015() -> None:
 
 
 def test_core_allow_is_exactly_appendix_a() -> None:
-    assert filters.core_allow == ["cs.LG", "cs.AI", "cs.CL", "cs.NE", "stat.ML", "cs.MA"]
+    assert filters.core_allow == ["cs.LG", "cs.AI", "cs.CL", "cs.NE", "stat.ML", "cs.MA", "cs.PL"]
 
 
 def test_borderline_is_exactly_appendix_a() -> None:
-    assert filters.borderline == ["cs.IR", "cs.CY", "cs.DS", "math.OC"]
+    assert filters.borderline == [
+        "cs.IR",
+        "cs.CY",
+        "cs.DS",
+        "math.OC",
+        "cs.DC",
+        "cs.CE",
+        "cs.MS",
+    ]
 
 
 def test_applied_deny_includes_cs_cv_and_wildcards() -> None:

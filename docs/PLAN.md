@@ -702,8 +702,9 @@ Two consequences worth stating:
 # config/filters.yaml
 year_floor: 2015           # STAGE 0. Configurable; 2015 per your decision.
 
-CORE_ALLOW:  [cs.LG, cs.AI, cs.CL, cs.NE, stat.ML, cs.MA]
-BORDERLINE:  [cs.IR, cs.CY, cs.DS, math.OC]          # → QUARANTINE, user decides
+CORE_ALLOW:  [cs.LG, cs.AI, cs.CL, cs.NE, stat.ML, cs.MA, cs.PL]
+BORDERLINE:  [cs.IR, cs.CY, cs.DS, math.OC,
+              cs.DC, cs.CE, cs.MS]                   # → QUARANTINE, user decides
 APPLIED_DENY:[cs.CV, cs.RO, cs.SE, cs.HC, cs.CR, cs.DB, cs.NI, cs.SD,
               q-bio.*, q-fin.*, eess.*, physics.*, econ.*, astro-ph.*]
 ```

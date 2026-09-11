@@ -586,8 +586,8 @@ paper_type_policy:
   DATASET:   { action: reject }
   POSITION:  { action: quarantine }
 
-CORE_ALLOW:   [cs.LG, cs.AI, cs.CL, cs.NE, stat.ML, cs.MA]
-BORDERLINE:   [cs.IR, cs.CY, cs.DS, math.OC]
+CORE_ALLOW:   [cs.LG, cs.AI, cs.CL, cs.NE, stat.ML, cs.MA, cs.PL]
+BORDERLINE:   [cs.IR, cs.CY, cs.DS, math.OC, cs.DC, cs.CE, cs.MS]
 APPLIED_DENY: [cs.CV, cs.RO, cs.SE, cs.HC, cs.CR, cs.DB, cs.NI, cs.SD,
                "q-bio.*", "q-fin.*", "eess.*", "physics.*", "econ.*", "astro-ph.*"]
 

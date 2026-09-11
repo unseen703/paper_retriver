@@ -7,8 +7,18 @@ paper_type_policy:
   DATASET:   { action: reject }
   POSITION:  { action: quarantine }
 
-CORE_ALLOW:   [cs.LG, cs.AI, cs.CL, cs.NE, stat.ML, cs.MA]
-BORDERLINE:   [cs.IR, cs.CY, cs.DS, math.OC]
+# cs.PL is core: "Program Synthesis with Large Language Models" and AlphaCode
+# are LLM-reasoning papers that happen to be filed under programming languages,
+# and they were arriving as CAT_NOT_ALLOWED -- refused for want of anyone having
+# classified the category, next to the ReAct and Reflexion work they belong
+# beside.
+CORE_ALLOW:   [cs.LG, cs.AI, cs.CL, cs.NE, stat.ML, cs.MA, cs.PL]
+# cs.DC, cs.CE and cs.MS sit next to ML systems work often enough to be worth a
+# look and not often enough to admit unread. QUARANTINE says "we are unsure";
+# CAT_NOT_ALLOWED said "nobody decided", which is a different and less useful
+# answer. Categories still absent from every list (quant-ph, gr-qc, cond-mat.*,
+# stat.ME) keep falling through deliberately.
+BORDERLINE:   [cs.IR, cs.CY, cs.DS, math.OC, cs.DC, cs.CE, cs.MS]
 APPLIED_DENY: [cs.CV, cs.RO, cs.SE, cs.HC, cs.CR, cs.DB, cs.NI, cs.SD,
                "q-bio.*", "q-fin.*", "eess.*", "physics.*", "econ.*", "astro-ph.*"]
 
