@@ -225,6 +225,56 @@ def test_function_terms_do_not_depend_on_word_order(cfg: FiltersConfig) -> None:
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Transformer protein language models are unsupervised structure learners",
+        "Self-Supervised Contrastive Learning of Protein Representations",
+        "Modeling the language of life: Deep Learning Protein Sequences",
+        "ProtLingo: Efficient Protein Language Modeling via Conditional Decoding",
+        "Learning protein representations at scale",
+    ],
+)
+def test_protein_language_and_representation_models_are_admitted(
+    title: str, cfg: FiltersConfig
+) -> None:
+    """
+    Representation learning over sequences, admitted by explicit choice; pure
+    structure prediction is not (see the test below).
+
+    **The split is deliberate and it is imperfect.** These two literatures
+    overlap heavily -- the first title here is literally a protein *language*
+    model paper whose contribution is *structure* -- so the boundary is drawn on
+    what the paper is about rather than on what it achieves. Widening to
+    structure would have brought in 263 papers of AlphaFold-adjacent work;
+    this brings the sequence-modelling corner of it and leaves the rest
+    quarantined and restorable.
+    """
+    decision = topic_filter(_paper(title, "q-bio.BM"), cfg)
+    assert decision.outcome is Outcome.ACCEPT, decision.reason_code
+    assert decision.reason_code == "BIOCHEM_ML"
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Highly accurate protein structure prediction with AlphaFold",
+        "Improved protein structure prediction using predicted interresidue distances",
+        "Accelerating Protein Design Using Autoregressive Generative Models",
+        "Lightweight MSA design advances protein folding",
+    ],
+)
+def test_structure_and_design_stay_out(title: str, cfg: FiltersConfig) -> None:
+    """
+    The other half of the split, and the reason the corridor is not simply
+    `protein`. 263 papers in the corpus match structure/design vocabulary; they
+    stay quarantined rather than drawn, and the review drawer is where any
+    individual one gets let in.
+    """
+    decision = topic_filter(_paper(title, "q-bio.BM"), cfg)
+    assert decision.outcome is not Outcome.ACCEPT
+
+
 def test_protein_structure_prediction_is_still_refused(cfg: FiltersConfig) -> None:
     """
     **The boundary this file is most likely to erode.** Structure prediction is

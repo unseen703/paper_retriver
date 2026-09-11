@@ -95,6 +95,22 @@ biochem_ml_keywords:
   - protein function
   - go term
   - gene ontology
+  # Protein representation learning -- sequence models, not structure models.
+  #
+  # **A deliberate and imperfect split.** 263 papers in the corpus match
+  # structure/design vocabulary, and admitting all of them opens the whole
+  # AlphaFold-adjacent literature. These three terms take the sequence-modelling
+  # corner of it, which is the part that is machine learning about proteins
+  # rather than structural biology with a neural network in it.
+  #
+  # The boundary does not cut cleanly -- "Transformer protein language models
+  # are unsupervised structure learners" is a language-model paper whose result
+  # is structure -- so it is drawn on what the paper is *about*. The rest stay
+  # QUARANTINE rather than REJECT, so the review drawer can let any one of them
+  # in without a config change.
+  - protein language
+  - protein representation
+  - protein sequence
 
 # Applied-AI vocabulary for the APPLIED cascade stage (PLAN.md Appendix A).
 # A hit QUARANTINES, never auto-rejects.
