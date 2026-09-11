@@ -135,10 +135,33 @@ def _is_reaction_ml(paper: Paper, cfg: FiltersConfig) -> bool:
     return any(keyword.lower() in title for keyword in cfg.reaction_ml_keywords)
 
 
+def _is_biochem_ml(paper: Paper, cfg: FiltersConfig) -> bool:
+    """
+    Does the title name computational biochemistry -- metabolic routes,
+    catalytic sites, enzyme function?
+
+    The same modelling problem as `_is_reaction_ml`, with a protein catalyst,
+    which is why it is a second list rather than a second condition. Either can
+    be narrowed or closed without disturbing the other, and `BIOCHEM_ML` in the
+    review drawer says which one admitted any given paper.
+
+    **Wider than the chemistry corridor, by explicit decision.** The binding-site
+    and docking terms admit structure-based drug discovery. That is a large
+    literature and only partly about reactions; it is in because it was asked
+    for, and it is separable because of the distinct reason code.
+
+    Terms that also read as ordinary biology carry their task word -- `catalytic
+    site prediction`, not bare `catalytic site`, which a DFT paper about zeolites
+    would otherwise satisfy.
+    """
+    title = paper.title.lower()
+    return any(keyword.lower() in title for keyword in cfg.biochem_ml_keywords)
+
+
 def topic_filter(paper: Paper, cfg: FiltersConfig) -> FilterDecision:
     primary = paper.primary_arxiv_category
 
-    # (0) ML for chemical reactions, admitted before anything can refuse it.
+    # (0) The two rescue corridors, admitted before anything can refuse them.
     #
     #     These papers live under physics.chem-ph and q-bio, which APPLIED_DENY
     #     rejects outright, and under S2 fields that FIELD_NON_CS rejects -- so
@@ -148,8 +171,19 @@ def topic_filter(paper: Paper, cfg: FiltersConfig) -> FilterDecision:
     #     The reason code is what R2.14's drawer groups by, and relabelling
     #     every cs.LG retrosynthesis paper REACTION_ML would rewrite history in
     #     a tab whose whole job is explaining what happened.
-    if _is_reaction_ml(paper, cfg) and not (primary and _matches_category(primary, cfg.core_allow)):
-        return accept(FilterStage.TOPIC, "REACTION_ML", primary_category=primary)
+    #
+    #     **Biochemistry is tried first, because its vocabulary is the more
+    #     specific of the two.** The lists overlap in exactly the way you would
+    #     expect them to: "retrobiosynthesis planning" contains "synthesis
+    #     planning", so a chemistry-first order labels a biosynthesis paper
+    #     REACTION_ML on an incidental substring. Nothing in the chemistry list
+    #     is a substring of a biochemistry term, so the reverse cannot happen
+    #     and a retrosynthesis paper still reports REACTION_ML.
+    if not (primary and _matches_category(primary, cfg.core_allow)):
+        if _is_biochem_ml(paper, cfg):
+            return accept(FilterStage.TOPIC, "BIOCHEM_ML", primary_category=primary)
+        if _is_reaction_ml(paper, cfg):
+            return accept(FilterStage.TOPIC, "REACTION_ML", primary_category=primary)
 
     # (a) The primary category is the strongest signal available, and it wins
     #     outright in both directions.

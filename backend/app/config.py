@@ -104,6 +104,11 @@ class FiltersConfig(BaseModel):
     #: categories APPLIED_DENY refuses. See config/filters.yaml for why the
     #: list is deliberately narrow.
     reaction_ml_keywords: list[str] = Field(default_factory=list)
+    #: Terms of art for ML applied to biochemistry -- metabolic routes, enzyme
+    #: active sites, enzyme and protein function. The second corridor through
+    #: STAGE 2, kept as its own list so that `BIOCHEM_ML` in the review drawer
+    #: can show what it admits and either corridor can be narrowed alone.
+    biochem_ml_keywords: list[str] = Field(default_factory=list)
     # Encodes the Appendix A comment "keyword hits QUARANTINE only, never
     # auto-reject" as something R1.5 can assert against, rather than a comment
     # a future edit can quietly contradict. Deliberately not a YAML key.

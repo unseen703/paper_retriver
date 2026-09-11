@@ -42,6 +42,52 @@ reaction_ml_keywords:
   - catalyst design
   - chemical reaction network
 
+# The second corridor: the same modelling problem with a protein catalyst.
+# Separate list and separate reason code (BIOCHEM_ML) from the chemistry terms
+# above, so the review drawer shows what each corridor admits and either can be
+# narrowed without disturbing the other.
+#
+# Terms that also read as ordinary biology carry their task word. Bare
+# 'catalytic site' would admit a DFT paper about zeolites; bare 'enzyme' would
+# admit crystallography. Precision is the risk here, not recall -- the symptom
+# of an over-eager list is a graph slowly filling with papers nobody wanted.
+biochem_ml_keywords:
+  # Metabolic reaction prediction
+  - metabolic pathway
+  - metabolic reaction
+  - retrobiosynth          # retrobiosynthesis, retrobiosynthetic
+  - biosynthetic pathway
+  - metabolite prediction
+  - biotransformation
+  # Enzyme reactive-site prediction
+  - active site prediction
+  - catalytic site prediction
+  - catalytic residue
+  - reactive site
+  - enzyme active site
+  # Enzyme function prediction
+  - enzyme function
+  - enzyme commission
+  - ec number
+  - enzyme annotation
+  - enzymatic reaction
+  - substrate specificity
+  # Binding sites and docking. THE WIDEST RULE HERE, added deliberately: these
+  # terms admit structure-based drug discovery, a large literature only partly
+  # about reactions. If the drawer's BIOCHEM_ML tab fills with docking papers,
+  # these four lines are what to delete.
+  - binding site
+  - binding affinity prediction
+  - protein-ligand
+  - molecular docking
+  # Protein function prediction -- the superset of enzyme function prediction,
+  # admitted by choice because the task is the same and the enzyme case cannot
+  # be separated from it without reading the paper. Structure prediction is NOT
+  # here and must not be: that is the AlphaFold literature, not this tool's.
+  - protein function prediction
+  - go term prediction
+  - gene ontology prediction
+
 # Applied-AI vocabulary for the APPLIED cascade stage (PLAN.md Appendix A).
 # A hit QUARANTINES, never auto-rejects.
 #
