@@ -235,7 +235,17 @@ describe("inTopicGroup", () => {
 
   it("recognises chemistry by its category", () => {
     expect(inTopicGroup("physics.chem-ph", "chem", "Density functional theory")).toBe(true);
-    expect(inTopicGroup("q-bio.QM", "chem", "Protein assay")).toBe(true);
+    expect(inTopicGroup("cond-mat.mtrl-sci", "chem", "Perovskite stability")).toBe(true);
+  });
+
+  it("files q-bio under biochemistry rather than chemistry", () => {
+    // A deliberate move. `q-bio.*` used to land in "chemistry" because it was
+    // the only non-CS bucket there was. Now that biochemistry has its own
+    // group, quantitative biology belongs there -- and leaving it in chemistry
+    // would mean the biochemistry tab missed the one category that is always
+    // biology.
+    expect(inTopicGroup("q-bio.QM", "biochem", "Protein assay")).toBe(true);
+    expect(inTopicGroup("q-bio.QM", "chem", "Protein assay")).toBe(false);
   });
 
   it("recognises chemistry by vocabulary even under a CS category", () => {
@@ -266,6 +276,93 @@ describe("inTopicGroup", () => {
   it("treats a node with neither signal as belonging to no group", () => {
     expect(inTopicGroup(null, "cs", "Some journal paper")).toBe(false);
     expect(inTopicGroup(null, "chem", "Some journal paper")).toBe(false);
+    expect(inTopicGroup(null, "biochem", "Some journal paper")).toBe(false);
+  });
+
+  // ----------------------------------------------------------------------
+  // Biochemistry -- the third group
+  // ----------------------------------------------------------------------
+
+  it("recognises biochemistry by vocabulary", () => {
+    // **These are the papers that prompted the group.** Every biochemistry
+    // paper in the real corpus has a NULL arXiv category -- they are journal
+    // papers, not preprints -- so a category-based rule finds none of them and
+    // they fall into no group at all, invisible under every specific filter.
+    for (const title of [
+      "Predicting Novel Metabolic Pathways through Subgraph Mining",
+      "A general model for predicting enzyme functions based on enzymatic reactions",
+      "NICEpath: Finding metabolic pathways in large networks",
+      "Binding site prediction with geometric deep learning",
+      "Molecular docking with learned scoring functions",
+    ]) {
+      expect(inTopicGroup(null, "biochem", title)).toBe(true);
+    }
+  });
+
+  it("gives biochemistry precedence over chemistry when a paper is both", () => {
+    // "enzymatic reaction" contains "reaction", so this matches both
+    // vocabularies. Biochemistry is the more specific reading, which is also
+    // the order the backend cascade checks them in.
+    const title = "Curating enzymatic reaction rules for biosynthesis";
+    expect(inTopicGroup(null, "biochem", title)).toBe(true);
+    expect(inTopicGroup(null, "chem", title)).toBe(false);
+  });
+
+  it("gives biochemistry precedence over CS", () => {
+    const title = "Enzyme function prediction with contrastive learning";
+    expect(inTopicGroup("cs.LG", "biochem", title)).toBe(true);
+    expect(inTopicGroup("cs.LG", "cs", title)).toBe(false);
+  });
+
+  it("keeps reaction chemistry out of biochemistry", () => {
+    // The corridors are separate on the backend and must read as separate
+    // here, or neither tab answers the question it exists for.
+    expect(inTopicGroup("cs.LG", "chem", "Retrosynthesis with graph networks")).toBe(true);
+    expect(inTopicGroup("cs.LG", "biochem", "Retrosynthesis with graph networks")).toBe(false);
+  });
+
+  it("keeps ordinary ML out of biochemistry", () => {
+    expect(inTopicGroup("cs.LG", "biochem", "Attention is all you need")).toBe(false);
+  });
+
+  it("catches the protein work that makes up a real biochemistry graph", () => {
+    /**
+     * **Titles taken verbatim from the "protein-reaction relation" session.**
+     *
+     * The first version of this list carried only metabolic and enzyme
+     * vocabulary and matched 1 of that session's 22 papers — the filter existed
+     * and the papers were still invisible, which is the bug it was added to
+     * fix. Real titles rather than invented ones, because invented ones are
+     * what passed the first time.
+     */
+    for (const title of [
+      "Evaluating Protein Transfer Learning with TAPE",
+      "Generative Models for Graph-Based Protein Design",
+      "Learning Protein Structure with a Differentiable Simulator",
+      "Lightweight MSA Design Advances Protein Folding From Evolutionary Embeddings",
+      "Dynamics-inspired Structure Hallucination for Protein-protein Interaction Modeling",
+      "Rethinking Text-based Protein Understanding: Retrieval or LLM?",
+      "NbBench: benchmarking language models for comprehensive nanobody tasks",
+      "Universal Biological Sequence Reranking for Improved De Novo Peptide Sequencing",
+      "Empowering Biomedical Discovery with AI Agents",
+      "Dual modality feature fused neural network integrating binding site information for drug target affinity prediction",
+    ]) {
+      expect(inTopicGroup(null, "biochem", title)).toBe(true);
+    }
+  });
+
+  it("still keeps the general-ML papers in that same session out", () => {
+    // The other half. A biochemistry session holds method papers too, and a
+    // filter that swept in Attention and BERT would group the whole graph.
+    for (const title of [
+      "Attention is All you Need",
+      "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding",
+      "Chronos-2: From Univariate to Universal Forecasting",
+      "Symbol-Equivariant Recurrent Reasoning Models",
+      "Self-Training With Noisy Student Improves ImageNet Classification",
+    ]) {
+      expect(inTopicGroup("cs.LG", "biochem", title)).toBe(false);
+    }
   });
 
   it("splits a graph into matched and dimmed", () => {

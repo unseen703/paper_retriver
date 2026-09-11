@@ -158,7 +158,7 @@ export function positionsToSave(
  * Three coarse buckets rather than a list of arXiv categories: the question is
  * "show me the chemistry side of this graph", not "show me cond-mat.mtrl-sci".
  */
-export type TopicGroup = "all" | "cs" | "chem";
+export type TopicGroup = "all" | "cs" | "chem" | "biochem";
 
 /**
  * How a paper is recognised as reaction chemistry.
@@ -188,9 +188,85 @@ const CHEM_TERMS = [
   "drug discovery",
 ];
 
+/**
+ * How a paper is recognised as computational biochemistry.
+ *
+ * **Deliberately wider than `filters.yaml:biochem_ml_keywords`**, because the
+ * two answer different questions. The YAML decides what may *enter* the corpus
+ * and is narrow on purpose — protein *structure* prediction is refused there,
+ * or the graph fills with the entire AlphaFold literature. This decides how to
+ * group what is *already on screen*, including papers added by hand or force.
+ * A protein-folding paper you deliberately added should appear under biochem;
+ * hiding it because the admission rule would not have chosen it would be the
+ * filter arguing with the user about what they are looking at.
+ *
+ * **Vocabulary matters even more here than for chemistry.** The biochemistry
+ * papers in the real corpus have a *null* arXiv primary category — they are
+ * journal papers, not preprints — so a category rule finds precisely none of
+ * them and they fall into no group at all.
+ *
+ * The list below was corrected against a real graph, twice over. The first
+ * version carried only metabolic and enzyme vocabulary and matched **1 of the
+ * 22 papers** in a session that is entirely protein machine learning.
+ *
+ * **One case stays unreachable and is worth naming:** "ProtTrans: Towards
+ * Cracking the Language of Life's Code…" contains no biochemical word at all.
+ * Title matching cannot catch it. Venue would (bioRxiv), but `GraphNodeOut`
+ * carries no venue, so that is a real limit rather than a missing term.
+ */
+const BIOCHEM_TERMS = [
+  // Metabolism and enzymes
+  "metabolic",
+  "metabolite",
+  "biosynth",
+  "retrobiosynth",
+  "enzym", // enzyme, enzymes, enzymatic
+  "catalytic residue",
+  "active site",
+  "reactive site",
+  "substrate specificity",
+  // Binding and docking
+  "binding site",
+  "binding affinity",
+  "protein-ligand",
+  "drug target",
+  "docking",
+  // Proteins — the bulk of a real biochemistry graph, and absent from the
+  // first version, which is why it matched almost nothing.
+  "protein",
+  "proteom",
+  "peptide",
+  "antibody",
+  "nanobody",
+  "amino acid",
+  "gene ontology",
+  "go term",
+  // Biology at large, for papers whose subject word is the only signal
+  "biolog", // biological, biology
+  "biomedical",
+  "bioinformatic",
+  "genom",
+  "molecular dynamics",
+];
+
 /** Categories that are chemistry regardless of what the title says. */
-const CHEM_PREFIXES = ["physics.", "q-bio.", "cond-mat."];
+const CHEM_PREFIXES = ["physics.", "cond-mat."];
+/**
+ * Quantitative biology is always biochemistry, never chemistry.
+ *
+ * `q-bio.*` used to sit in CHEM_PREFIXES because chemistry was the only
+ * non-CS bucket available. Now that biochemistry has its own group, leaving it
+ * there would mean the biochemistry tab missed the one category that is
+ * unambiguously biology.
+ */
+const BIOCHEM_PREFIXES = ["q-bio."];
 const CS_PREFIXES = ["cs.", "stat.", "math."];
+
+function isBiochemistry(category: string | null | undefined, title: string): boolean {
+  if (category && BIOCHEM_PREFIXES.some((p) => category.startsWith(p))) return true;
+  const lower = title.toLowerCase();
+  return BIOCHEM_TERMS.some((term) => lower.includes(term));
+}
 
 function isChemistry(category: string | null | undefined, title: string): boolean {
   if (category && CHEM_PREFIXES.some((p) => category.startsWith(p))) return true;
@@ -217,9 +293,18 @@ export function inTopicGroup(
   title = "",
 ): boolean {
   if (group === "all") return true;
+
+  // Most specific first. "enzymatic reaction" matches both vocabularies, and
+  // biochemistry is the narrower reading -- the same order the backend cascade
+  // checks the two corridors in, for the same reason.
+  const biochem = isBiochemistry(category, title);
+  if (group === "biochem") return biochem;
+  if (biochem) return false;
+
   const chem = isChemistry(category, title);
   if (group === "chem") return chem;
   if (chem) return false;
+
   return Boolean(category && CS_PREFIXES.some((prefix) => category.startsWith(prefix)));
 }
 

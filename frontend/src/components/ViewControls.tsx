@@ -34,7 +34,13 @@ const TOPICS: { value: TopicGroup; label: string; title: string }[] = [
   {
     value: "chem",
     label: "chemistry",
-    title: "physics.*, q-bio.*, cond-mat.* — reaction and molecular work",
+    title: "Retrosynthesis, reaction and reactivity prediction, catalysis",
+  },
+  {
+    value: "biochem",
+    label: "biochem",
+    title:
+      "Metabolic pathways, enzyme function and active sites, binding and docking — q-bio.* too",
   },
 ];
 
