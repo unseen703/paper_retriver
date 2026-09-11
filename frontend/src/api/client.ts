@@ -26,6 +26,7 @@ export type NodeResponse = components["schemas"]["NodeResponse"];
 export type ExpandResponse = components["schemas"]["ExpandResponse"];
 export type JobAccepted = components["schemas"]["JobAccepted"];
 export type JobStatus = components["schemas"]["JobStatus"];
+export type JobCancelled = components["schemas"]["JobCancelled"];
 export type NodePosition = components["schemas"]["NodePosition"];
 export type StatsResponse = components["schemas"]["StatsResponse"];
 export type CandidatesResponse = components["schemas"]["CandidatesResponse"];
@@ -121,6 +122,18 @@ export const api = {
     request<JobAccepted>(`/api/sessions/${sid}/expansions`, {
       method: "POST",
       body: JSON.stringify({ hops: 1, max_new: maxNew }),
+    }),
+
+  /**
+   * Ask a running expansion to stop (PLAN.md §G's cooperative cancel).
+   *
+   * A queued job stops outright; a running one stops at its next anchor, and
+   * whatever it already fetched stays in the graph. A 409 means the job had
+   * already finished — there was nothing left to stop.
+   */
+  cancelExpansion: (sid: number, jobId: number) =>
+    request<JobCancelled>(`/api/sessions/${sid}/expansions/${jobId}`, {
+      method: "DELETE",
     }),
 
   /**

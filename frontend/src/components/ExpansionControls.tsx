@@ -44,6 +44,12 @@ export function ExpansionControls({ sessionId, disabled }: ExpansionControlsProp
   const expand = useMutation({
     mutationFn: async () => {
       const status = await api.expandAndWait(sessionId, maxNew, setProgress);
+      if (status.status === "CANCELLED") {
+        // Not an error: the user asked for this. Reporting "the expansion did
+        // not finish" for a deliberate stop would make the button look broken
+        // at the exact moment it worked.
+        return status.result ?? null;
+      }
       if (status.status !== "DONE") {
         // A FAILED job is an error here even though the HTTP calls all
         // succeeded -- otherwise the button would report success for a run
@@ -115,7 +121,16 @@ export function ExpansionControls({ sessionId, disabled }: ExpansionControlsProp
           and the first poll, which would otherwise show nothing at all. */}
       {expand.isPending &&
         (progress ? (
-          <ExpansionProgress status={progress} />
+          <ExpansionProgress
+            status={progress}
+            onCancel={() => {
+              // Fire and forget: `expandAndWait` is still polling and will see
+              // the CANCELLED status on its next tick, which is what actually
+              // ends the run in this component. A 409 here means the job
+              // finished first, and the poll is about to say so anyway.
+              void api.cancelExpansion(sessionId, progress.job_id).catch(() => {});
+            }}
+          />
         ) : (
           <span style={{ fontSize: 12, color: "var(--dim)" }} role="status">
             queueing…

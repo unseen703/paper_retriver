@@ -353,7 +353,20 @@ export interface paths {
         get: operations["get_expansion_api_sessions__sid__expansions__job_id__get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Cancel Expansion
+         * @description Ask a job to stop -- PLAN.md section G's cooperative cancel.
+         *
+         *     A QUEUED job stops outright, because `claim_next` will never pick up a
+         *     cancelled row. A RUNNING one is asked to stop at its next checkpoint, and
+         *     anything it already committed stays: those papers were fetched with real
+         *     API calls, and discarding them would throw away what the run already cost.
+         *
+         *     **409, not 200, for a job that has finished.** There is nothing to stop, and
+         *     reporting success for an action that did nothing is what makes a cancel
+         *     button untrustworthy the first time someone checks whether it worked.
+         */
+        delete: operations["cancel_expansion_api_sessions__sid__expansions__job_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -700,6 +713,30 @@ export interface components {
              * @description Where to poll for this job's progress.
              */
             poll: string;
+        };
+        /**
+         * JobCancelled
+         * @description What `DELETE /expansions/{id}` returns.
+         *
+         *     `was` names the status the job was in, because "cancelled before it started"
+         *     and "stopped mid-run" mean different things to whoever is looking at the
+         *     graph afterwards: only the second can have left new papers behind.
+         */
+        JobCancelled: {
+            /** Job Id */
+            job_id: number;
+            /** Session Id */
+            session_id: number;
+            /**
+             * Status
+             * @default CANCELLED
+             */
+            status: string;
+            /**
+             * Was
+             * @description The status the job was in when it was cancelled.
+             */
+            was: string;
         };
         /**
          * JobProgress
@@ -1867,6 +1904,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JobStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_expansion_api_sessions__sid__expansions__job_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The id returned by the 202. */
+                job_id: number;
+                /** @description Session id. */
+                sid: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobCancelled"];
                 };
             };
             /** @description Validation Error */

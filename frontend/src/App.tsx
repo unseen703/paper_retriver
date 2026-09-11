@@ -286,8 +286,13 @@ export default function App() {
         )}
         {!showFixture && !graph.isPending && !graph.isError && nodes.length === 0 && (
           <Overlay>
-            No papers yet. R1.22 adds the dialog; until then use the CLI:{" "}
-            <code>uv run python -m app.cli seed "…" --expand</code>
+            {/* This told people to use the CLI for months after the dialog
+                shipped. An empty state is the one screen where a wrong
+                instruction is guaranteed to be read, because it is all there
+                is to read. */}
+            No papers yet — use <strong>+ Add paper</strong> to search for one
+            and drop it in as a seed, then <strong>Expand</strong> to grow the
+            graph around it.
           </Overlay>
         )}
 
@@ -366,7 +371,7 @@ export default function App() {
             {shown.score != null ? ` · score ${shown.score.toFixed(2)}` : ""}
           </span>
         ) : (
-          <span>Hover a node to read it. Click to pin it here. Full inspector at R1.22.</span>
+          <span>Hover a node to read it here. Click to open the full inspector.</span>
         )}
       </footer>
 

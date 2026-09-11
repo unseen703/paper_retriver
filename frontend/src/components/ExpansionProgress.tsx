@@ -36,10 +36,20 @@ const LABEL: Record<string, string> = {
 
 export interface ExpansionProgressProps {
   status: JobStatus | null;
+  /**
+   * Ask the run to stop. Absent means no cancel control — which is the honest
+   * rendering for a caller that has nowhere to send the request.
+   */
+  onCancel?: () => void;
 }
 
-export function ExpansionProgress({ status }: ExpansionProgressProps) {
+export function ExpansionProgress({ status, onCancel }: ExpansionProgressProps) {
   if (!status) return null;
+
+  // Only while there is something to stop. A Cancel button beside a finished
+  // run is a control that can only fail, and the 409 it would earn is the
+  // server correctly refusing a question the UI should not have asked.
+  const active = status.status === "QUEUED" || status.status === "RUNNING";
 
   const reached = STAGES.indexOf(status.stage as (typeof STAGES)[number]);
   const failed = status.status === "FAILED" || status.status === "CANCELLED";
@@ -88,6 +98,28 @@ export function ExpansionProgress({ status }: ExpansionProgressProps) {
         {LABEL[status.stage] ?? status.stage}
         {counts.length > 0 && ` · ${counts.join(" · ")}`}
       </span>
+
+      {active && onCancel && (
+        <button
+          type="button"
+          onClick={onCancel}
+          // The papers already fetched are kept deliberately: they cost real
+          // API calls. Saying so here means the button does not have to be
+          // tried once to find out what it does.
+          title="Stop this expansion — papers already fetched are kept"
+          style={{
+            background: "none",
+            border: "1px solid var(--track, #4a5568)",
+            borderRadius: 3,
+            color: "var(--dim)",
+            font: "inherit",
+            padding: "0 6px",
+            cursor: "pointer",
+          }}
+        >
+          Cancel
+        </button>
+      )}
     </div>
   );
 }

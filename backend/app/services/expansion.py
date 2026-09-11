@@ -115,6 +115,25 @@ async def expand(
     citations_by_id = {p.id: p.citation_count for p in anchor_papers if p.id is not None}
 
     for anchor_id in anchors:
+        # **The cooperative-cancel checkpoint.** Between anchors, because that
+        # is a boundary where nothing is half-written: each anchor commits as
+        # it completes, so stopping here leaves the edges already fetched
+        # stored and the ones not yet requested unspent.
+        #
+        # Checked per anchor rather than per request: the fetch is where the
+        # API budget goes, and a cancel that only took effect at the end of the
+        # run would stop nothing worth stopping.
+        if result.expansion_id is not None:
+            with engine.connect() as conn:
+                if expansions_repo.is_cancelled(conn, result.expansion_id):
+                    logger.info(
+                        "expansion_cancelled_midrun session=%s job_id=%s anchors_done=%s",
+                        session_id,
+                        result.expansion_id,
+                        anchors.index(anchor_id),
+                    )
+                    return _finish(engine, session_id, result, "cancelled")
+
         s2_id = s2_by_id.get(anchor_id)
         if s2_id is None:
             continue

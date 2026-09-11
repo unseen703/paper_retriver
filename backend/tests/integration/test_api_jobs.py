@@ -376,6 +376,174 @@ def test_an_unknown_session_is_a_404(env: tuple[TestClient, Engine]) -> None:
 
 
 # --------------------------------------------------------------------------
+# Cancelling — PLAN.md section G's `DELETE /api/expansions/{job_id}`
+# --------------------------------------------------------------------------
+#
+# "Cooperative" is the operative word. A QUEUED job can be cancelled outright
+# because nothing has happened yet. A RUNNING one is asked to stop at the next
+# checkpoint, and whatever it already committed stays committed — papers were
+# fetched and rows were written, and pretending otherwise would mean either
+# lying about the state or rolling back work the user paid API calls for.
+
+
+def _pause_worker() -> None:
+    """
+    Stop the background worker so a QUEUED job stays queued.
+
+    Without this, every test that cancels a QUEUED row is racing the worker --
+    `claim_next` takes any queued job regardless of session, so the test passes
+    or fails depending on which won. A flaky test is worse than a failing one:
+    it gets re-run until it goes green and then believed.
+    """
+    from app.api import deps
+
+    deps.get_worker().stop()
+
+
+def test_cancelling_a_queued_job_reports_it_cancelled(env: tuple[TestClient, Engine]) -> None:
+    client, engine = env
+    _seed(client)
+    _pause_worker()
+    with engine.begin() as conn:
+        job_id = expansions_repo.enqueue(conn, SID, {"hops": 1, "max_new": 5}, "testcfg")
+
+    response = client.delete(f"/api/sessions/{SID}/expansions/{job_id}")
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "CANCELLED"
+
+
+def test_a_cancelled_job_is_never_claimed(env: tuple[TestClient, Engine]) -> None:
+    """
+    The point of cancelling something QUEUED. `claim_next` is the only way work
+    starts, so a cancelled row it refuses to pick up can never run.
+    """
+    _, engine = env
+    with engine.begin() as conn:
+        job_id = expansions_repo.enqueue(conn, SID, {"hops": 1, "max_new": 5}, "testcfg")
+        assert expansions_repo.cancel(conn, SID, job_id) == "QUEUED"
+        assert expansions_repo.claim_next(conn) is None
+
+
+def test_finishing_does_not_resurrect_a_cancelled_job(env: tuple[TestClient, Engine]) -> None:
+    """
+    **The subtle one.** Cancelling a RUNNING job is a race by construction: the
+    worker is mid-flight and will call `finish` when it stops. `finish` wrote
+    `status` unconditionally, so a job cancelled a moment before completion
+    came back as DONE — the cancel silently undone, which is worse than a
+    cancel that fails loudly.
+    """
+    _, engine = env
+    with engine.begin() as conn:
+        job_id = expansions_repo.enqueue(conn, SID, {"hops": 1, "max_new": 5}, "testcfg")
+        expansions_repo.claim_next(conn)  # -> RUNNING
+        expansions_repo.cancel(conn, SID, job_id)
+        expansions_repo.finish(
+            conn,
+            SID,
+            job_id,
+            status="DONE",
+            n_pool=3,
+            n_filtered=1,
+            n_added=2,
+            api_calls=4,
+            cache_hits=0,
+        )
+        record = expansions_repo.get(conn, SID, job_id)
+
+    assert record is not None
+    assert record["status"] == "CANCELLED", "a cancelled job must stay cancelled"
+
+
+def test_the_counters_a_cancelled_run_earned_are_kept(env: tuple[TestClient, Engine]) -> None:
+    """
+    Cancelling stops the work; it does not erase what the work already cost.
+    An api_calls count of zero on a job that spent twenty would misreport the
+    budget the run actually consumed.
+    """
+    _, engine = env
+    with engine.begin() as conn:
+        job_id = expansions_repo.enqueue(conn, SID, {"hops": 1, "max_new": 5}, "testcfg")
+        expansions_repo.claim_next(conn)
+        expansions_repo.cancel(conn, SID, job_id)
+        expansions_repo.finish(
+            conn,
+            SID,
+            job_id,
+            status="DONE",
+            n_pool=3,
+            n_filtered=1,
+            n_added=2,
+            api_calls=4,
+            cache_hits=0,
+        )
+        record = expansions_repo.get(conn, SID, job_id)
+
+    assert record is not None
+    assert record["api_calls"] == 4
+    assert record["n_added"] == 2
+
+
+def test_cancelling_a_finished_job_is_a_409(env: tuple[TestClient, Engine]) -> None:
+    """
+    There is nothing to stop. A 200 here would report success for an action
+    that did nothing, which is the reading that makes a cancel button untrustworthy.
+    """
+    client, _ = env
+    _seed(client)
+    job_id = _queue(client).json()["job_id"]
+    _await_done(client, job_id)
+
+    response = client.delete(f"/api/sessions/{SID}/expansions/{job_id}")
+    assert response.status_code == 409, response.text
+
+
+def test_cancelling_twice_is_a_409(env: tuple[TestClient, Engine]) -> None:
+    client, engine = env
+    _seed(client)
+    _pause_worker()
+    with engine.begin() as conn:
+        job_id = expansions_repo.enqueue(conn, SID, {"hops": 1, "max_new": 5}, "testcfg")
+
+    assert client.delete(f"/api/sessions/{SID}/expansions/{job_id}").status_code == 200
+    assert client.delete(f"/api/sessions/{SID}/expansions/{job_id}").status_code == 409
+
+
+def test_cancelling_an_unknown_job_is_a_404(env: tuple[TestClient, Engine]) -> None:
+    client, _ = env
+    _seed(client)
+    assert client.delete(f"/api/sessions/{SID}/expansions/424242").status_code == 404
+
+
+def test_cancelling_another_sessions_job_is_a_404(env: tuple[TestClient, Engine]) -> None:
+    """Absent, not forbidden — the same reasoning that put {sid} in the route."""
+    client, engine = env
+    _seed(client)
+    with engine.begin() as conn:
+        conn.execute(
+            text("INSERT INTO sessions (id, name, created_at) VALUES (2, 'other', '2026-01-01')")
+        )
+        job_id = expansions_repo.enqueue(conn, SID, {"hops": 1, "max_new": 5}, "testcfg")
+
+    assert client.delete(f"/api/sessions/2/expansions/{job_id}").status_code == 404
+
+
+def test_cancelling_clears_the_way_for_a_new_expansion(env: tuple[TestClient, Engine]) -> None:
+    """
+    What cancelling is *for*. An active job makes the next POST a 409, so a run
+    that is no longer wanted blocks the session until it is cancelled.
+    """
+    client, engine = env
+    _seed(client)
+    _pause_worker()
+    with engine.begin() as conn:
+        job_id = expansions_repo.enqueue(conn, SID, {"hops": 1, "max_new": 5}, "testcfg")
+
+    assert _queue(client).status_code == 409
+    assert client.delete(f"/api/sessions/{SID}/expansions/{job_id}").status_code == 200
+    assert _queue(client).status_code == 202
+
+
+# --------------------------------------------------------------------------
 # Polling
 # --------------------------------------------------------------------------
 
