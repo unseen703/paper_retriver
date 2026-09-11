@@ -299,6 +299,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/{sid}/candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Candidates
+         * @description This session's candidates, ranked.
+         */
+        get: operations["list_candidates_api_sessions__sid__candidates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/{sid}/expansions": {
         parameters: {
             query?: never;
@@ -380,6 +400,41 @@ export interface components {
              * @default false
              */
             force: boolean;
+        };
+        /**
+         * CandidateOut
+         * @description One row of the ranked table.
+         */
+        CandidateOut: {
+            /** Id */
+            id: number;
+            /** Title */
+            title: string;
+            /** Score */
+            score?: number | null;
+            /** Score Breakdown */
+            score_breakdown?: {
+                [key: string]: number;
+            };
+            /** Year */
+            year?: number | null;
+            /** Venue */
+            venue?: string | null;
+            /** Citation Count */
+            citation_count?: number | null;
+            /** Paper Type */
+            paper_type?: string | null;
+            /** Primary Arxiv Category */
+            primary_arxiv_category?: string | null;
+            /** Depth */
+            depth?: number | null;
+        };
+        /** CandidatesResponse */
+        CandidatesResponse: {
+            /** Candidates */
+            candidates: components["schemas"]["CandidateOut"][];
+            /** Total */
+            total: number;
         };
         /**
          * ClearGraphResponse
@@ -1705,6 +1760,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReviewResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_candidates_api_sessions__sid__candidates_get: {
+        parameters: {
+            query?: {
+                /** @description Maximum rows to return. */
+                limit?: number;
+                /** @description Column to order by, descending. */
+                sort?: "score" | "year" | "citations";
+            };
+            header?: never;
+            path: {
+                /** @description Session id. */
+                sid: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CandidatesResponse"];
                 };
             };
             /** @description Validation Error */
