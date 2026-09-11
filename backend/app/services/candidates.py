@@ -121,7 +121,9 @@ def build_pool(
         frontier_set
         | graph_repo.get_node_ids(conn, session_id)
         | events_repo.removed_paper_ids(conn, session_id)
-        | decisions_repo.non_accepted_paper_ids(conn, session_id)
+        # Version-scoped: a verdict from an older config is stale, and the
+        # cascade re-decides it rather than this pass assuming it still holds.
+        | decisions_repo.non_accepted_paper_ids(conn, session_id, cfg.config_version)
     )
 
     # Hub anchors contribute their references but not their citations.
