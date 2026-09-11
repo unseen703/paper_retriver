@@ -10,6 +10,7 @@ import { NodeInspector, type Neighbour } from "./components/NodeInspector";
 import { ViewControls } from "./components/ViewControls";
 import { StatsPanel } from "./components/StatsPanel";
 import { ReviewDrawer } from "./components/ReviewDrawer";
+import { CandidateList } from "./components/CandidateList";
 import { ClearGraphDialog } from "./components/ClearGraphDialog";
 import { SessionSwitcher } from "./components/SessionSwitcher";
 import type { LabelMode } from "./components/stylesheet";
@@ -42,6 +43,10 @@ export default function App() {
   const [showFixture, setShowFixture] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
+  // Open by default. PLAN.md section F: "`<CandidateList>` is the product […]
+  // Don't let the graph eat all your UI effort." A panel you have to discover
+  // is not where most decisions will get made.
+  const [listOpen, setListOpen] = useState(true);
   const [clearOpen, setClearOpen] = useState(false);
   const [hoveredId, setHoveredId] = useState<number | null>(null);
   const [relayoutToken, setRelayoutToken] = useState(0);
@@ -200,6 +205,15 @@ export default function App() {
           </button>
           <button
             type="button"
+            onClick={() => setListOpen((was) => !was)}
+            disabled={showFixture}
+            aria-expanded={listOpen}
+            title="The ranked candidate table — where most decisions get made"
+          >
+            Ranked
+          </button>
+          <button
+            type="button"
             onClick={() => setReviewOpen((was) => !was)}
             disabled={showFixture}
             aria-expanded={reviewOpen}
@@ -236,6 +250,32 @@ export default function App() {
       )}
 
       <main style={{ display: "flex", minHeight: 0, minWidth: 0 }}>
+        {/* Left of the canvas, because the inspector opens on the right and
+            the two are read together: pick a row here, read the detail there.
+            A fixed width rather than a flex share — a ranked table is a column
+            of known shape, and letting it grow with the window would stretch
+            the title column past the point where the eye can scan it. */}
+        {!showFixture && listOpen && (
+          <aside
+            aria-label="Ranked candidates"
+            style={{
+              width: 400,
+              flexShrink: 0,
+              display: "flex",
+              flexDirection: "column",
+              minHeight: 0,
+              borderRight: "1px solid #333",
+            }}
+          >
+            <CandidateList
+              sessionId={sessionId}
+              selectedId={selectedId}
+              onSelect={setSelected}
+              disabled={showFixture}
+            />
+          </aside>
+        )}
+
         <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
         {!showFixture && graph.isPending && <Overlay>Loading the graph…</Overlay>}
         {!showFixture && graph.isError && (
