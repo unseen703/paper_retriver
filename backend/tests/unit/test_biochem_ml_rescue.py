@@ -178,8 +178,19 @@ def test_binding_site_and_docking_are_admitted(title: str, cfg: FiltersConfig) -
     "title",
     [
         "Protein function prediction with language models",
+        # **The phrasings the first version missed.** `protein function
+        # prediction` was stored as a full phrase, so substring matching only
+        # ever recognised one word order -- and the test above happened to use
+        # that order, so it passed while most real titles were being refused.
+        # `enzyme function` was already bare and caught every phrasing, which is
+        # what made the inconsistency visible when the two were compared.
+        "Predicting protein function from sequence embeddings",
+        "Deep learning for protein function annotation",
+        "A benchmark for protein function prediction",
         "GO term prediction from structure",
+        "Predicting GO terms with graph networks",
         "Gene ontology prediction for uncharacterized proteins",
+        "Large-scale gene ontology annotation",
     ],
 )
 def test_protein_function_prediction_is_admitted(title: str, cfg: FiltersConfig) -> None:
@@ -191,6 +202,22 @@ def test_protein_function_prediction_is_admitted(title: str, cfg: FiltersConfig)
     decision = topic_filter(_paper(title, "q-bio.BM"), cfg)
     assert decision.outcome is Outcome.ACCEPT, decision.reason_code
     assert decision.reason_code == "BIOCHEM_ML"
+
+
+def test_function_terms_do_not_depend_on_word_order(cfg: FiltersConfig) -> None:
+    """
+    The invariant behind the case above, stated directly.
+
+    A keyword matched as a substring recognises exactly one word order. Storing
+    a whole task phrase like "protein function prediction" therefore refuses
+    "predicting protein function", which is the same paper. Every term meant to
+    name a *task* is stored as the shortest distinctive noun phrase, and the
+    task word is left to vary.
+    """
+    for term in ("protein function", "enzyme function", "gene ontology"):
+        assert term in cfg.biochem_ml_keywords, (
+            f"{term!r} must be stored bare; a longer phrase only matches one word order"
+        )
 
 
 # --------------------------------------------------------------------------

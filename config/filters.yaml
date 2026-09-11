@@ -84,9 +84,17 @@ biochem_ml_keywords:
   # admitted by choice because the task is the same and the enzyme case cannot
   # be separated from it without reading the paper. Structure prediction is NOT
   # here and must not be: that is the AlphaFold literature, not this tool's.
-  - protein function prediction
-  - go term prediction
-  - gene ontology prediction
+  #
+  # **Stored bare, and the task word left to vary.** These were originally
+  # written as whole task phrases -- 'protein function prediction' -- and a
+  # substring match recognises exactly one word order, so "predicting protein
+  # function" was refused while "protein function prediction" was admitted:
+  # the same paper, decided two ways by its grammar. `enzyme function` above
+  # was already bare and caught every phrasing, which is what made the
+  # inconsistency visible. Name the subject, not the sentence.
+  - protein function
+  - go term
+  - gene ontology
 
 # Applied-AI vocabulary for the APPLIED cascade stage (PLAN.md Appendix A).
 # A hit QUARANTINES, never auto-rejects.
