@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -141,6 +142,42 @@ def _external(ids: dict[str, Any] | None, key: str) -> str | None:
     return None if value is None else str(value)
 
 
+#: arXiv mints a DataCite DOI for every submission, shaped
+#: `10.48550/arXiv.<id>`. Matched case-insensitively because S2 returns the
+#: capitalisation inconsistently.
+_ARXIV_DOI = re.compile(r"^10\.48550/arxiv\.(?P<id>.+)$", re.IGNORECASE)
+
+
+def _arxiv_id(ids: dict[str, Any] | None) -> str | None:
+    """
+    The arXiv id, from the `ArXiv` key or failing that from the DOI.
+
+    **S2 frequently omits the `ArXiv` key for papers that are plainly on
+    arXiv.** DeepSeek-R1 comes back as::
+
+        {"DBLP": "journals/corr/abs-2501-12948",
+         "DOI": "10.48550/arXiv.2501.12948",
+         "CorpusId": 284488789}
+
+    Reading only `ArXiv` left `arxiv_id` null, so the join to the local arXiv
+    snapshot never happened, so `primary_arxiv_category` was null, so the topic
+    filter fell past every category rule to "S2 says Computer Science and
+    nothing else" and quarantined it as FIELD_CS_ONLY. A core ML paper sitting
+    in the review drawer, and nothing in the reason code pointing at the cause.
+
+    The DOI is already in the response, so this costs no request. It is a
+    fallback rather than a replacement: when S2 does provide `ArXiv`, that is
+    the authoritative value.
+    """
+    explicit = _external(ids, "ArXiv")
+    if explicit:
+        return explicit
+
+    doi = _external(ids, "DOI")
+    match = _ARXIV_DOI.match(doi) if doi else None
+    return match.group("id") if match else None
+
+
 def to_paper(raw: S2Paper, *, crawl_state: CrawlState = CrawlState.METADATA) -> Paper | None:
     """Normalize a wire record. Returns None if it lacks the two required fields."""
     if not raw.paperId or not raw.title:
@@ -159,7 +196,7 @@ def to_paper(raw: S2Paper, *, crawl_state: CrawlState = CrawlState.METADATA) -> 
         reference_count=raw.referenceCount or 0,
         influential_citation_count=raw.influentialCitationCount or 0,
         doi=_external(raw.externalIds, "DOI"),
-        arxiv_id=_external(raw.externalIds, "ArXiv"),
+        arxiv_id=_arxiv_id(raw.externalIds),
         authors=tuple((a.authorId, a.name) for a in raw.authors if a.authorId and a.name),
         s2_fields=tuple(raw.fieldsOfStudy or ()),
         publication_types=tuple(raw.publicationTypes or ()),
