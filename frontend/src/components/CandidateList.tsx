@@ -29,7 +29,7 @@
  * table with selectable rows is the honest description of what this is.
  */
 import { memo, useCallback, useState } from "react";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { api, type CandidateOut, type CandidateSort } from "../api/client";
 
 /** Column header label -> the `sort` value the server understands. */
@@ -175,11 +175,23 @@ export function CandidateList({
     queryKey: ["candidates", sessionId, sort],
     queryFn: () => api.candidates(sessionId, sort, DEFAULT_LIMIT),
     enabled: !disabled,
-    // Changing the sort is a new query key, so without this the table blanks
-    // to "Ranking…" on every header click. Re-sorting is the most common thing
-    // anyone does here, and an empty table is the same shape as "no
+    // Changing the sort is a new query key, so without a placeholder the table
+    // blanks to "Ranking…" on every header click. Re-sorting is the most common
+    // thing anyone does here, and an empty table is the same shape as "no
     // candidates" — a different and much more alarming message.
-    placeholderData: keepPreviousData,
+    //
+    // **But only within the same session.** Plain `keepPreviousData` is
+    // `previousData => previousData`, fed from a per-observer field that never
+    // checks which key produced it. Switching sessions therefore kept the old
+    // session's rows under the new session's header — reproduced live as 50
+    // chemistry papers showing in a 22-paper protein session — and a click
+    // would have sent `onSelect` a paper id belonging to a different graph.
+    //
+    // Fixed here rather than with a `key={sessionId}` at the call site: a key
+    // is a rule every future caller has to remember, and this is the component
+    // that knows the invariant.
+    placeholderData: (previous, previousQuery) =>
+      previousQuery?.queryKey?.[1] === sessionId ? previous : undefined,
   });
 
   // Stable identity, so `Row`'s memo is not defeated by a new function every

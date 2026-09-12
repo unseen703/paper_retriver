@@ -189,6 +189,46 @@ describe("CandidateList", () => {
     expect(screen.queryByText(/ranking/i)).not.toBeInTheDocument();
   });
 
+  it("does not show the previous session's rows while a new session loads", async () => {
+    /**
+     * **A cross-session leak, and it needed a cold cache to see.**
+     *
+     * `keepPreviousData` is `previousData => previousData`, fed from a
+     * per-observer field that does not check whether the *session* segment of
+     * the query key changed. `<CandidateList>` is not keyed on `sessionId`, so
+     * switching sessions kept the same observer and the same rows.
+     *
+     * Reproduced in the running app: switching from session 2 (104 chemistry
+     * papers) to a never-visited session 3 (22 protein papers) rendered 50 rows
+     * of session 2's papers under session 3's header. Clicking one would call
+     * `onSelect` with a paper id that belongs to a different graph — the
+     * session_id contract broken at the last possible moment.
+     *
+     * Keeping rows across a *sort* change is the intended behaviour and is
+     * asserted separately above; only a session change must drop them.
+     */
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    stubFetch(body([row({ id: 1, title: "Session one paper" })]));
+
+    const { rerender } = render(
+      <QueryClientProvider client={client}>
+        <CandidateList sessionId={1} selectedId={null} onSelect={() => {}} />
+      </QueryClientProvider>,
+    );
+    await screen.findByText("Session one paper");
+
+    // Never-fetched session: nothing is cached for it, which is the only
+    // condition under which the placeholder is reached.
+    stubFetch(body([row({ id: 99, title: "Session two paper" })]));
+    rerender(
+      <QueryClientProvider client={client}>
+        <CandidateList sessionId={2} selectedId={null} onSelect={() => {}} />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.queryByText("Session one paper")).not.toBeInTheDocument();
+  });
+
   it("marks which column the server ordered by", async () => {
     await renderList(body([row()]));
     // aria-sort is how a screen reader learns the table is ordered at all.

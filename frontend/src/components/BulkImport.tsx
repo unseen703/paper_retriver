@@ -18,7 +18,7 @@
  * the user will later assume are in the graph. Not-found, already-present and
  * filtered-out are different answers and are shown as different answers.
  */
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ApiError, api } from "../api/client";
 import { parseTitles, summaryLine, type ImportResult } from "./readingList";
@@ -69,6 +69,27 @@ export function BulkImport({ sessionId }: BulkImportProps) {
   // value captured in that closure would stay false however many times the
   // button was pressed.
   const stopped = useRef(false);
+
+  /**
+   * **Unmounting stops the run.**
+   *
+   * `AddPaperDialog` closes on Escape and on a backdrop click, and neither is
+   * disabled while an import is running. Without this, closing the dialog took
+   * the Stop button away but not the loop: it kept its closure over `titles`
+   * and `sessionId` and went on calling `api.search` and `api.addNode` once a
+   * second for every remaining title — invisible, unstoppable, still writing to
+   * the graph and still spending the rate-limited API budget.
+   *
+   * Reopening the dialog and starting a second import then gave two concurrent
+   * one-per-second loops against the same limit, which is the exact thing the
+   * sequential design exists to prevent.
+   *
+   * The loop's own `if (stopped.current) break` does the rest, so at most the
+   * one request already in flight completes.
+   */
+  useEffect(() => () => {
+    stopped.current = true;
+  }, []);
 
   async function handleFile(file: File): Promise<void> {
     setParseError(null);

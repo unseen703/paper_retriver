@@ -925,7 +925,7 @@ export interface components {
              * @description Per-term contributions to the score. Empty until R3 ships real features -- present-and-empty so the UI renders 'unavailable' from the shape rather than from a special case.
              */
             score_breakdown?: {
-                [key: string]: unknown;
+                [key: string]: number;
             };
         };
         /**

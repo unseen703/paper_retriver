@@ -26,7 +26,7 @@
 import { toBars, sumOf } from "./scoreBars";
 
 export interface ScoreBreakdownProps {
-  breakdown: Record<string, number> | null | undefined;
+  breakdown: Record<string, unknown> | null | undefined;
   /** The score as stored, for the consistency check. */
   score: number | null | undefined;
 }

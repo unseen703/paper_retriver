@@ -99,7 +99,7 @@ describe("ClearGraphDialog", () => {
     fireEvent.click(confirmButton());
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toContain("confirm=true");
     expect(init.method).toBe("DELETE");
   });

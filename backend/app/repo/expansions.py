@@ -176,17 +176,24 @@ def cancel(conn: Connection, session_id: int, expansion_id: int) -> str | None:
     return str(previous) if result.rowcount else None
 
 
-def is_cancelled(conn: Connection, expansion_id: int) -> bool:
+def is_cancelled(conn: Connection, session_id: int, expansion_id: int) -> bool:
     """
     Has this job been asked to stop? The read `expand` does at its checkpoints.
 
-    Deliberately not session-scoped: the worker holds an id it already claimed,
-    and re-deriving the session only to check a flag would be ceremony. Nothing
-    is disclosed -- the answer is a boolean about a row the caller is running.
+    **`session_id` first positional, like every other function here.** This
+    shipped without one, behind a docstring arguing that re-deriving the session
+    to check a flag was ceremony. BUILD.md's contract is unconditional and
+    CLAUDE.md rule 9 is explicit that a justifying comment is a workaround
+    rather than a sign-off -- and the caller had the session in hand the whole
+    time, so the exception bought nothing.
+
+    No data leaked, because `expansion_id` is a global primary key. That is
+    exactly the contract's point: "if you can call it without a session, you
+    will eventually call it with the wrong one."
     """
     status = conn.execute(
-        text("SELECT status FROM expansions WHERE id = :id"),
-        {"id": expansion_id},
+        text("SELECT status FROM expansions WHERE id = :id AND session_id = :session_id"),
+        {"id": expansion_id, "session_id": session_id},
     ).scalar()
     return status == "CANCELLED"
 

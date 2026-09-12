@@ -33,7 +33,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.clients.cache import ResponseCache
 from app.clients.rate_limit import TokenBucket
 from app.logging_setup import log_s2_request
-from app.models import Author, CrawlState, Paper, PaperStub
+from app.models import Author, CrawlState, Paper, PaperStub, strip_arxiv_version
 
 logger = logging.getLogger(__name__)
 
@@ -175,7 +175,23 @@ def _arxiv_id(ids: dict[str, Any] | None) -> str | None:
 
     doi = _external(ids, "DOI")
     match = _ARXIV_DOI.match(doi) if doi else None
-    return match.group("id") if match else None
+    if match is None:
+        return None
+
+    # **The version suffix has to go.** arXiv mints a DOI per submission
+    # *version*, so this path can see `10.48550/arXiv.2501.12948v2` where the
+    # explicit `ArXiv` key would have carried the bare `2501.12948`.
+    # `arxiv_meta` is keyed on bare ids and looked up with an exact match, so a
+    # versioned id misses, the category stays null, and `topic_filter` falls
+    # through to FIELD_CS_ONLY -- silently reproducing the very bug this
+    # fallback exists to fix.
+    #
+    # Sharing `models.strip_arxiv_version` rather than re-expressing the
+    # pattern. It was written for this exact shape in `services/dedup.py`, and
+    # moved down into `models` so both a client and a service can reach it
+    # without the client importing upward -- two regexes for one question are
+    # two regexes that can disagree.
+    return strip_arxiv_version(match.group("id"))
 
 
 def to_paper(raw: S2Paper, *, crawl_state: CrawlState = CrawlState.METADATA) -> Paper | None:

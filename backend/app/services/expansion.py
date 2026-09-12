@@ -125,7 +125,7 @@ async def expand(
         # run would stop nothing worth stopping.
         if result.expansion_id is not None:
             with engine.connect() as conn:
-                if expansions_repo.is_cancelled(conn, result.expansion_id):
+                if expansions_repo.is_cancelled(conn, session_id, result.expansion_id):
                     logger.info(
                         "expansion_cancelled_midrun session=%s job_id=%s anchors_done=%s",
                         session_id,

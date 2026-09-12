@@ -686,3 +686,32 @@ def test_the_worker_survives_a_job_that_explodes(env: tuple[TestClient, Engine])
     live._client_factory = original  # type: ignore[assignment]
     second = _queue(client).json()["job_id"]
     assert _await_done(client, second)["status"] == "DONE", "the worker survived the first job"
+
+
+def test_is_cancelled_is_session_scoped(env: tuple[TestClient, Engine]) -> None:
+    """
+    BUILD.md's session_id contract is unconditional: "every function in
+    `repo/graph.py`, `repo/events.py`, and `repo/expansions.py` takes
+    `session_id` as its **first positional argument**."
+
+    `is_cancelled` shipped without one, behind a docstring arguing the
+    exception. CLAUDE.md rule 9 is explicit that a justifying comment is a
+    workaround rather than a sign-off -- and every sibling in the module
+    (`start`, `finish`, `cancel`, `get`, `record_progress`, `fail`, `active`)
+    takes it, so the carve-out was silent and inconsistent as well.
+
+    No data leaked today, because `expansion_id` is a global primary key. That
+    is the point the contract makes: "if you can call it without a session, you
+    will eventually call it with the wrong one."
+    """
+    _, engine = env
+    with engine.begin() as conn:
+        conn.execute(
+            text("INSERT INTO sessions (id, name, created_at) VALUES (2, 'other', '2026-01-01')")
+        )
+        job_id = expansions_repo.enqueue(conn, SID, {"hops": 1, "max_new": 5}, "testcfg")
+        expansions_repo.cancel(conn, SID, job_id)
+
+        assert expansions_repo.is_cancelled(conn, SID, job_id) is True
+        # The same id, asked about by a session that does not own it.
+        assert expansions_repo.is_cancelled(conn, 2, job_id) is False

@@ -87,6 +87,32 @@ describe("toBars", () => {
     expect(toBars(undefined)).toEqual([]);
   });
 
+  it("ignores a term whose value is not a number", () => {
+    /**
+     * `score_breakdown` is a JSON column, and `NodeDetail` declares it
+     * `dict[str, Any]` — so the generated type promises `unknown`, not
+     * `number`. Doing arithmetic on whatever arrives produced `NaN` widths:
+     * bars of no particular size, on the component whose entire job is being
+     * trustworthy. Dropping the term is the honest answer; inventing a zero
+     * would put a bar on the chart for a value nobody can read.
+     */
+    const bars = toBars({ overlap: 1.0, broken: "oops" as unknown as number });
+    expect(bars.map((b) => b.name)).toEqual(["overlap"]);
+  });
+
+  it("ignores NaN and infinity", () => {
+    const bars = toBars({ a: Number.NaN, b: Number.POSITIVE_INFINITY, ok: 0.5 });
+    expect(bars.map((b) => b.name)).toEqual(["ok"]);
+  });
+
+  it("does not let a bad term poison the scale of the good ones", () => {
+    // If a non-number reached `Math.max`, every magnitude became NaN and the
+    // whole chart rendered blank rather than one row being missing.
+    const bars = toBars({ overlap: 1.0, quality: 0.5, junk: null as unknown as number });
+    expect(bars[0].magnitude).toBeCloseTo(1);
+    expect(bars[1].magnitude).toBeCloseTo(0.5);
+  });
+
   it("is deterministic", () => {
     const breakdown = { overlap: 1.0, quality: 0.4, hub: -0.6 };
     expect(toBars(breakdown)).toEqual(toBars(breakdown));
@@ -117,6 +143,21 @@ describe("sumOf", () => {
     // The two are computed separately and shown together, so they have to be
     // asserted together or they can drift.
     const breakdown = { overlap: 1.0, quality: 0.4, hub: -0.6 };
+    const fromBars = toBars(breakdown).reduce((acc, bar) => acc + bar.value, 0);
+    expect(fromBars).toBeCloseTo(sumOf(breakdown));
+  });
+});
+
+describe("sumOf, with a JSON column's worth of surprises", () => {
+  it("skips a non-numeric term rather than producing NaN", () => {
+    // A single bad value turning the total into NaN would blank the headline
+    // number and the mismatch warning at once — the two things that make the
+    // breakdown checkable.
+    expect(sumOf({ overlap: 1.0, broken: "oops" as unknown as number })).toBeCloseTo(1.0);
+  });
+
+  it("agrees with the bars when a term was dropped", () => {
+    const breakdown = { overlap: 1.0, hub: -0.4, junk: undefined as unknown as number };
     const fromBars = toBars(breakdown).reduce((acc, bar) => acc + bar.value, 0);
     expect(fromBars).toBeCloseTo(sumOf(breakdown));
   });

@@ -24,7 +24,29 @@ export interface Bar {
   negative: boolean;
 }
 
-type Breakdown = Record<string, number> | null | undefined;
+/**
+ * What the wire actually promises.
+ *
+ * `score_breakdown` is a JSON column, and `NodeDetail` declares it
+ * `dict[str, Any]` — so the generated type is `unknown`-valued, not
+ * `number`-valued. Declaring `Record<string, number>` here was a claim the API
+ * does not make, and it broke `tsc -b` at the one call site that passes the
+ * real thing.
+ */
+type Breakdown = Record<string, unknown> | null | undefined;
+
+/**
+ * A finite number, or nothing.
+ *
+ * Arithmetic on whatever arrives produced `NaN` widths — bars of no particular
+ * size on the component whose whole job is being trustworthy — and a single bad
+ * value reaching `Math.max` blanked the entire chart rather than one row.
+ * Dropping the term is the honest answer; coercing it to zero would draw a bar
+ * for a value nobody can read.
+ */
+function numeric(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
 
 /**
  * Bars, biggest contribution first.
@@ -39,7 +61,13 @@ type Breakdown = Record<string, number> | null | undefined;
 export function toBars(breakdown: Breakdown): Bar[] {
   if (!breakdown) return [];
 
-  const entries = Object.entries(breakdown);
+  // Filtered before anything is measured: a non-number reaching `Math.max`
+  // makes every magnitude NaN, so one unreadable term would blank the chart.
+  const entries: [string, number][] = [];
+  for (const [name, raw] of Object.entries(breakdown)) {
+    const value = numeric(raw);
+    if (value !== null) entries.push([name, value]);
+  }
   if (entries.length === 0) return [];
 
   const widest = Math.max(...entries.map(([, value]) => Math.abs(value)));
@@ -66,5 +94,12 @@ export function toBars(breakdown: Breakdown): Bar[] {
  */
 export function sumOf(breakdown: Breakdown): number {
   if (!breakdown) return 0;
-  return Object.values(breakdown).reduce((total, value) => total + value, 0);
+  // Skips the same terms `toBars` skips, so the headline total always equals
+  // the bars beneath it. One bad value turning this into NaN would blank both
+  // the total and the mismatch warning — the two things that make the
+  // breakdown checkable in the first place.
+  return Object.values(breakdown).reduce<number>((total, raw) => {
+    const value = numeric(raw);
+    return value === null ? total : total + value;
+  }, 0);
 }

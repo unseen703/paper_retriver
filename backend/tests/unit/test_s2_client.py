@@ -446,3 +446,28 @@ def test_an_ordinary_doi_yields_no_arxiv_id() -> None:
 def test_no_external_ids_at_all_is_not_an_error() -> None:
     assert _ids(None) is None
     assert _ids({}) is None
+
+
+def test_a_versioned_doi_loses_its_version_suffix() -> None:
+    """
+    arXiv mints a DOI per submission *version*, so the fallback can see
+    `10.48550/arXiv.2501.12948v2` where the explicit `ArXiv` key would have been
+    the bare `2501.12948`.
+
+    `arxiv_meta` is keyed on bare ids and looked up with an exact match, so a
+    versioned id misses, `primary_arxiv_category` stays null, and `topic_filter`
+    falls through to FIELD_CS_ONLY -- silently reproducing the bug this fallback
+    was added to fix.
+
+    Latent rather than active: none of the 259 arXiv DOIs in the current corpus
+    carry a version. `dedup.strip_arxiv_version` already existed for exactly
+    this shape, and is reused here rather than re-expressed, so the two cannot
+    disagree about what a version suffix looks like.
+    """
+    assert _ids({"DOI": "10.48550/arXiv.2501.12948v2"}) == "2501.12948"
+    assert _ids({"DOI": "10.48550/arXiv.1706.03762v11"}) == "1706.03762"
+
+
+def test_an_old_style_arxiv_doi_keeps_its_subject_prefix() -> None:
+    """`cs.CV/0701001` is a whole id, not an id with a version on it."""
+    assert _ids({"DOI": "10.48550/arXiv.cs.CV/0701001"}) == "cs.CV/0701001"

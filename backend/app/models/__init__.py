@@ -18,6 +18,7 @@ from app.models.domain import (
     ScoredCandidate,
     VenueTier,
     normalize_title,
+    strip_arxiv_version,
     surname_of,
 )
 
@@ -39,5 +40,6 @@ __all__ = [
     "ScoredCandidate",
     "VenueTier",
     "normalize_title",
+    "strip_arxiv_version",
     "surname_of",
 ]
