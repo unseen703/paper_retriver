@@ -36,7 +36,10 @@ export interface ImportResult {
  * established. Order is preserved and the first spelling wins, so the report
  * reads in the same order as the file.
  *
- * A UTF-8 BOM is stripped. Notepad writes one, it is invisible, and it would
+ * A UTF-8 BOM is stripped, matched as `\uFEFF` rather than pasted literally --
+ * an invisible character in source survives until some editor or re-encoding
+ * eats it, and then this stops working with no visible diff. Notepad writes
+ * one, it is invisible in the file too, and it would
  * otherwise become part of the first title and make that one search fail for
  * a reason nobody could see.
  */
@@ -44,7 +47,7 @@ export function parseTitles(text: string): string[] {
   const seen = new Set<string>();
   const titles: string[] = [];
 
-  for (const line of text.replace(/^﻿/, "").split(/\r?\n/)) {
+  for (const line of text.replace(/^\uFEFF/, "").split(/\r?\n/)) {
     const title = line.trim();
     if (!title || title.startsWith("#")) continue;
 

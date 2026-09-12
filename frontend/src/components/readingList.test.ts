@@ -52,7 +52,7 @@ describe("parseTitles", () => {
      * the first title, so exactly one search fails — the first — for a reason
      * that cannot be seen by looking at the file.
      */
-    expect(parseTitles("﻿Attention\nBERT")).toEqual(["Attention", "BERT"]);
+    expect(parseTitles("\uFEFFAttention\nBERT")).toEqual(["Attention", "BERT"]);
   });
 
   it("drops repeated titles, case-insensitively", () => {
