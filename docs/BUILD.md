@@ -30,7 +30,7 @@ Do these before task R0.1.
 
 | # | Item | How |
 |---|---|---|
-| P1 | Python 3.11+, Node 20+, git | — |
+| P1 | Python 3.11+, **Node 22+**, git | Node 20 is not enough: jsdom's bundled `undici` calls `webidl.util.markAsUncloneable`, which 20 does not provide, and the whole vitest suite fails to start. CI runs 24. |
 | P2 | `uv` installed | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
 | P3 | **Semantic Scholar API key** | Request at the S2 API site. Approval can take days — do this first so it isn't blocking. The plan works without one at a lower rate limit. |
 | P4 | **Read the current S2 API docs** | Verify: batch endpoint max IDs, rate limits, whether `embedding.specter_v2` is served, exact nested-field syntax. My numbers are from mid-2026 and *will* be slightly wrong. Write what you find into `docs/s2-api-notes.md` — it becomes the spec your client is built against. |

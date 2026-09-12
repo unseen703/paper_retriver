@@ -38,7 +38,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # 24, matching the development machine, not BUILD.md's "Node 20+".
+          # Pinned to 20 first and the job failed on the first run with
+          # `webidl.util.markAsUncloneable is not a function` -- jsdom's bundled
+          # undici needs a newer Node than 20 provides, so the whole vitest
+          # suite failed to start. Exactly the "works on my machine" gap this
+          # job was added to close, caught by its own first execution.
+          node-version: 24
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
