@@ -30,7 +30,7 @@ Do these before task R0.1.
 
 | # | Item | How |
 |---|---|---|
-| P1 | Python 3.11+, Node 20+, git | — |
+| P1 | Python 3.11+, **Node 22+**, git | Node 20 is not enough: jsdom's bundled `undici` calls `webidl.util.markAsUncloneable`, which 20 does not provide, and the whole vitest suite fails to start. CI runs 24. |
 | P2 | `uv` installed | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
 | P3 | **Semantic Scholar API key** | Request at the S2 API site. Approval can take days — do this first so it isn't blocking. The plan works without one at a lower rate limit. |
 | P4 | **Read the current S2 API docs** | Verify: batch endpoint max IDs, rate limits, whether `embedding.specter_v2` is served, exact nested-field syntax. My numbers are from mid-2026 and *will* be slightly wrong. Write what you find into `docs/s2-api-notes.md` — it becomes the spec your client is built against. |
@@ -512,19 +512,29 @@ Less granular deliberately: by R3 you'll know the codebase better than this docu
 
 ### R3 — Ranking and interpretability · 6–8 days
 
-- [ ] `services/graphops.py`: build `nx.DiGraph` from SQL (measure it — expect ~10ms at 2k nodes; do **not** build cache invalidation until profiling says to)
-- [ ] PageRank + reverse PageRank (hub-ness ≈ survey-ness), in/out degree
-- [ ] Co-citation and bibliographic coupling counts — **run the R1.9 boundary-paper test again here**, now against the real feature
-- [ ] Crawl-bias handling: PageRank over `crawl_state != STUB` only; suppress the column below 60% completeness; document in `docs/algorithms.md`
-- [ ] Age-normalized citations, recency, venue tier; lazy author h-index for the top shortlist only
-- [ ] Rank-percentile normalization (Appendix B.7) — **not** z-score
-- [ ] `node_features` persisted; `services/ranking.py` a **pure** function of `(features, weights)`
-- [ ] `PUT /api/config` → instant rescore, zero API calls. This is the payoff for persisting features.
-- [ ] `score_breakdown` persisted per node
-- [ ] `<CandidateList>` — sortable ranked table. **This, not the graph, is where you'll make most decisions.**
-- [ ] `<ScoreBreakdown>` — horizontal bars per term. Highest signal-per-line in the app.
-- [ ] Score threshold floor + per-source diversity cap into budget allocation
-- [ ] Tests: PageRank vs analytic answer · normalization outlier-immunity · monotonicity per feature · byte-identical determinism · breakdown terms sum to score
+- [x] `services/graphops.py`: build `nx.DiGraph` from SQL (measured; subgraph **views**, not copies — 118ms → 85ms)
+- [x] PageRank + reverse PageRank (hub-ness ≈ survey-ness), in/out degree
+- [x] Co-citation and bibliographic coupling counts — the R1.9 boundary-paper test re-run against the real feature. Lives in `services/similarity.py`, not `graphops.py`; it runs over the **corpus**, not the drawn graph
+- [x] Crawl-bias handling: PageRank over `crawl_state != STUB` only; suppressed below 60% completeness (**absent from the feature dict, not zero**); documented in `docs/algorithms.md`
+- [x] Age-normalized citations, recency
+- [x] Rank-percentile normalization (Appendix B.7) — **not** z-score
+- [x] `node_features` persisted (`services/features.py`); `services/ranking.py` a **pure** function of `(features, weights)`
+- [x] `PUT /api/config` → instant rescore, zero API calls. This is the payoff for persisting features.
+- [x] `score_breakdown` persisted per node
+- [x] Per-source diversity cap in budget allocation — `_enforce_source_cap`, relaxed rather than returning short
+
+Remaining, in execution order. Each is one commit; review after every third.
+
+- [ ] **R3.a — `GET /api/sessions/{sid}/candidates?limit=50&sort=score`.** Specified in PLAN.md §G, never built. `<CandidateList>` cannot exist without it, so it comes first. Ranked CANDIDATE nodes with score, breakdown and the metadata a reader decides from.
+- [ ] **R3.b — `<CandidateList>`** — sortable ranked table. **This, not the graph, is where you'll make most decisions.** Row selection drives `selectedNodeId`, so the graph and the table share one selection.
+- [ ] **R3.c — `<ScoreBreakdown>`** — horizontal bars per term. Highest signal-per-line in the app. `GET /nodes/{id}` already returns `features` and `score_breakdown`; this is frontend-only.
+  *After R3.c the R3 gate is met: flip one weight → the list reorders → the breakdown says why.*
+- [ ] **R3.d — venue tier.** `papers.venue_tier` exists and is **0/635 populated**; `venue` is populated for all 635 and `CORE_VENUES` is already in `filters.yaml`. A normalizer, a backfill, and a feature — no schema change.
+- [ ] **R3.e — score threshold floor.** `ranking.yaml` carries `budget.score_floor: 0.0`, `config.py` parses it, and **nothing reads it** — a lever connected to nothing, the exact failure `test_features.py` asserts against for weights. Wire it into budget allocation and add the matching test.
+- [ ] ~~Lazy author h-index~~ — **deferred past R4, deliberately.** PLAN.md §C4 already demotes it ("a weak signal with a real cost"), its weight is 0.00, and the table holds 66 authors with **zero** h-index values, so it needs a per-paper S2 author fetch. Paying that API cost for a signal nothing can yet show is worth something is backwards; R4 is what decides whether it earns its place.
+- [x] Tests: PageRank vs analytic answer · normalization outlier-immunity · monotonicity per feature · byte-identical determinism · breakdown terms sum to score
+
+**Config invariant learned here, the hard way:** the sign in `ranking.yaml` *is* the sign in the score. `hub` shipped as `0.60  # subtracted`; `score_paper` multiplies, so hubs were rewarded for months of writing. It was invisible until R3 first populated the feature, and `test_active_r1_weights` had asserted the wrong value — the test encoded the bug. `test_subtractive_weights_are_actually_negative` now pins it.
 
 ### R4 — Evaluation ⭐ · 5–7 days
 
@@ -576,8 +586,8 @@ paper_type_policy:
   DATASET:   { action: reject }
   POSITION:  { action: quarantine }
 
-CORE_ALLOW:   [cs.LG, cs.AI, cs.CL, cs.NE, stat.ML, cs.MA]
-BORDERLINE:   [cs.IR, cs.CY, cs.DS, math.OC]
+CORE_ALLOW:   [cs.LG, cs.AI, cs.CL, cs.NE, stat.ML, cs.MA, cs.PL]
+BORDERLINE:   [cs.IR, cs.CY, cs.DS, math.OC, cs.DC, cs.CE, cs.MS]
 APPLIED_DENY: [cs.CV, cs.RO, cs.SE, cs.HC, cs.CR, cs.DB, cs.NI, cs.SD,
                "q-bio.*", "q-fin.*", "eess.*", "physics.*", "econ.*", "astro-ph.*"]
 

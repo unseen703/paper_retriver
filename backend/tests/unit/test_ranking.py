@@ -289,3 +289,29 @@ def test_a_future_year_is_not_more_than_maximally_recent() -> None:
     should be as recent as possible, not more recent than possible.
     """
     assert recency(2027, as_of_year=2026) == pytest.approx(1.0)
+
+
+# --------------------------------------------------------------------------
+# The configured weights must mean what their comments say
+# --------------------------------------------------------------------------
+
+
+def test_subtractive_weights_are_actually_negative() -> None:
+    """
+    `ranking.yaml` marked `hub` and `dislike` "subtracted" in a comment while
+    giving them positive values. `score_paper` multiplies, so a positive `hub`
+    weight *rewards* being a hub -- a paper everything cites, which is the one
+    recommendation you least need, because you have already read it.
+
+    Invisible until R3 actually computed the feature: before that nothing
+    populated `hub`, so the sign was never exercised. Found by ranking a real
+    graph and checking the arithmetic, where the top paper's breakdown showed
+    `hub: +0.4`.
+
+    A comment cannot subtract. The config has to say what it means.
+    """
+    from app.config import load_ranking
+
+    weights = load_ranking().weights.model_dump()
+    assert weights["hub"] < 0, "a hub is a bad recommendation, however good it looks"
+    assert weights["dislike"] <= 0, "R5 subtracts this; it must never reward a dislike"

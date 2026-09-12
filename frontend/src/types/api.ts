@@ -4,6 +4,32 @@
  */
 
 export interface paths {
+    "/api/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Config
+         * @description The active weights. A ranking you cannot inspect is one you cannot tune.
+         */
+        get: operations["get_config_api_config_get"];
+        /**
+         * Update Config
+         * @description Replace some weights and re-rank every graph from persisted features.
+         *
+         *     No API calls and no feature recomputation -- see the module docstring.
+         */
+        put: operations["update_config_api_config_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions": {
         parameters: {
             query?: never;
@@ -273,6 +299,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/{sid}/candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Candidates
+         * @description This session's candidates, ranked.
+         */
+        get: operations["list_candidates_api_sessions__sid__candidates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/{sid}/expansions": {
         parameters: {
             query?: never;
@@ -307,7 +353,20 @@ export interface paths {
         get: operations["get_expansion_api_sessions__sid__expansions__job_id__get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Cancel Expansion
+         * @description Ask a job to stop -- PLAN.md section G's cooperative cancel.
+         *
+         *     A QUEUED job stops outright, because `claim_next` will never pick up a
+         *     cancelled row. A RUNNING one is asked to stop at its next checkpoint, and
+         *     anything it already committed stays: those papers were fetched with real
+         *     API calls, and discarding them would throw away what the run already cost.
+         *
+         *     **409, not 200, for a job that has finished.** There is nothing to stop, and
+         *     reporting success for an action that did nothing is what makes a cancel
+         *     button untrustworthy the first time someone checks whether it worked.
+         */
+        delete: operations["cancel_expansion_api_sessions__sid__expansions__job_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -356,6 +415,41 @@ export interface components {
             force: boolean;
         };
         /**
+         * CandidateOut
+         * @description One row of the ranked table.
+         */
+        CandidateOut: {
+            /** Id */
+            id: number;
+            /** Title */
+            title: string;
+            /** Score */
+            score?: number | null;
+            /** Score Breakdown */
+            score_breakdown?: {
+                [key: string]: number;
+            };
+            /** Year */
+            year?: number | null;
+            /** Venue */
+            venue?: string | null;
+            /** Citation Count */
+            citation_count?: number | null;
+            /** Paper Type */
+            paper_type?: string | null;
+            /** Primary Arxiv Category */
+            primary_arxiv_category?: string | null;
+            /** Depth */
+            depth?: number | null;
+        };
+        /** CandidatesResponse */
+        CandidatesResponse: {
+            /** Candidates */
+            candidates: components["schemas"]["CandidateOut"][];
+            /** Total */
+            total: number;
+        };
+        /**
          * ClearGraphResponse
          * @description What a clear actually did (R2.15).
          */
@@ -365,6 +459,31 @@ export interface components {
              * @description Nodes removed from this session's graph. The corpus -- papers, authors, edges, cached responses -- is untouched: that is what the API budget bought, and it is shared across sessions.
              */
             cleared: number;
+        };
+        /**
+         * ConfigResponse
+         * @description The active weights, and where they came from.
+         */
+        ConfigResponse: {
+            /** Weights */
+            weights: {
+                [key: string]: number;
+            };
+            /**
+             * Config Version
+             * @description The version stamped into every expansion and filter decision -- how you tell which weights produced a given graph.
+             */
+            config_version: string;
+            /**
+             * Overridden
+             * @description True when the active weights differ from config/ranking.yaml because of a PUT. Overrides are in memory and reset on restart.
+             * @default false
+             */
+            overridden: boolean;
+        };
+        /** ConfigUpdateRequest */
+        ConfigUpdateRequest: {
+            weights?: components["schemas"]["WeightUpdate"];
         };
         /**
          * CreateSessionRequest
@@ -511,6 +630,8 @@ export interface components {
             citation_count?: number | null;
             /** Paper Type */
             paper_type?: string | null;
+            /** Primary Arxiv Category */
+            primary_arxiv_category?: string | null;
             /**
              * In Degree
              * @default 0
@@ -592,6 +713,30 @@ export interface components {
              * @description Where to poll for this job's progress.
              */
             poll: string;
+        };
+        /**
+         * JobCancelled
+         * @description What `DELETE /expansions/{id}` returns.
+         *
+         *     `was` names the status the job was in, because "cancelled before it started"
+         *     and "stopped mid-run" mean different things to whoever is looking at the
+         *     graph afterwards: only the second can have left new papers behind.
+         */
+        JobCancelled: {
+            /** Job Id */
+            job_id: number;
+            /** Session Id */
+            session_id: number;
+            /**
+             * Status
+             * @default CANCELLED
+             */
+            status: string;
+            /**
+             * Was
+             * @description The status the job was in when it was cancelled.
+             */
+            was: string;
         };
         /**
          * JobProgress
@@ -780,7 +925,7 @@ export interface components {
              * @description Per-term contributions to the score. Empty until R3 ships real features -- present-and-empty so the UI renders 'unavailable' from the shape rather than from a special case.
              */
             score_breakdown?: {
-                [key: string]: unknown;
+                [key: string]: number;
             };
         };
         /**
@@ -900,6 +1045,29 @@ export interface components {
             removed: number[];
             /** Gc Swept */
             gc_swept: number[];
+        };
+        /** RescoreResponse */
+        RescoreResponse: {
+            /** Weights */
+            weights: {
+                [key: string]: number;
+            };
+            /**
+             * Config Version
+             * @description The version stamped into every expansion and filter decision -- how you tell which weights produced a given graph.
+             */
+            config_version: string;
+            /**
+             * Overridden
+             * @description True when the active weights differ from config/ranking.yaml because of a PUT. Overrides are in memory and reset on restart.
+             * @default false
+             */
+            overridden: boolean;
+            /**
+             * Rescored
+             * @description Nodes rescored, across every session. Weights are global.
+             */
+            rescored: number;
         };
         /**
          * ReviewBucketOut
@@ -1101,6 +1269,35 @@ export interface components {
             /** Context */
             ctx?: Record<string, never>;
         };
+        /**
+         * WeightUpdate
+         * @description A partial weight update.
+         *
+         *     Every field optional so one number can move on its own; `extra="forbid"`
+         *     so a typo is a 422 rather than a silent no-op.
+         */
+        WeightUpdate: {
+            /** Ppr */
+            ppr?: number | null;
+            /** Cocite */
+            cocite?: number | null;
+            /** Bibcoup */
+            bibcoup?: number | null;
+            /** Overlap */
+            overlap?: number | null;
+            /** Quality */
+            quality?: number | null;
+            /** Recency */
+            recency?: number | null;
+            /** Venue */
+            venue?: number | null;
+            /** Author */
+            author?: number | null;
+            /** Dislike */
+            dislike?: number | null;
+            /** Hub */
+            hub?: number | null;
+        };
     };
     responses: never;
     parameters: never;
@@ -1110,6 +1307,59 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    get_config_api_config_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfigResponse"];
+                };
+            };
+        };
+    };
+    update_config_api_config_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfigUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RescoreResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_sessions_api_sessions_get: {
         parameters: {
             query?: never;
@@ -1560,6 +1810,43 @@ export interface operations {
             };
         };
     };
+    list_candidates_api_sessions__sid__candidates_get: {
+        parameters: {
+            query?: {
+                /** @description Maximum rows to return. */
+                limit?: number;
+                /** @description Column to order by, descending. */
+                sort?: "score" | "year" | "citations";
+            };
+            header?: never;
+            path: {
+                /** @description Session id. */
+                sid: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CandidatesResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     create_expansion_api_sessions__sid__expansions_post: {
         parameters: {
             query?: never;
@@ -1617,6 +1904,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JobStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_expansion_api_sessions__sid__expansions__job_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The id returned by the 202. */
+                job_id: number;
+                /** @description Session id. */
+                sid: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobCancelled"];
                 };
             };
             /** @description Validation Error */

@@ -8,8 +8,13 @@ weights:
   recency:  0.30
   venue:    0.00   # R3
   author:   0.00   # R3, cold-start only
-  dislike:  0.00   # R5, subtracted
-  hub:      0.60   # subtracted
+  # Negative, not "positive with a comment saying subtracted". `score_paper`
+  # multiplies, so the sign in this file is the sign in the score -- a positive
+  # `hub` weight rewards being a hub, which is the one recommendation you least
+  # need because you have already read it. That was the value here until R3
+  # computed the feature and made it visible.
+  dislike: -0.00   # R5
+  hub:     -0.60
 budget:
   recency_lane_frac: 0.15
   direction_floor_frac: 0.20

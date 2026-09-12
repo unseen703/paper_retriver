@@ -213,6 +213,12 @@ export const stylesheet = [
   // Lighter than `fade` (0.1): a search narrows attention within a graph you
   // are still reading, where a neighbourhood highlight answers "what is
   // connected to this" and can afford to push everything else right back.
+  // Outside the chosen topic group (CS / chemistry). Its own class rather than
+  // reusing `searchFade` so a topic filter and a title search can be active at
+  // once without one clearing the other -- and dimmer, because a topic filter
+  // is a deliberate narrowing rather than a lookup.
+  { selector: "node.topicFade", style: { opacity: 0.12 } },
+  { selector: "edge.topicFade", style: { opacity: 0.05 } },
   { selector: "node.searchFade", style: { opacity: 0.25 } },
   { selector: "edge.searchFade", style: { opacity: 0.08 } },
 
@@ -264,6 +270,9 @@ export function toElementData(node: GraphNodeOut, years: YearRange) {
     yearT:
       typeof node.year === "number" && span > 0 ? (node.year - years.min) / span : 0.5,
     paperType: node.paper_type ?? "UNKNOWN",
+    // Null for anything not on arXiv, which the topic filter reads as
+    // "belongs to no group" rather than guessing one.
+    category: node.primary_arxiv_category ?? null,
     title: node.title,
   };
 }

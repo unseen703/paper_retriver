@@ -89,11 +89,19 @@ def test_year_floor_is_2015() -> None:
 
 
 def test_core_allow_is_exactly_appendix_a() -> None:
-    assert filters.core_allow == ["cs.LG", "cs.AI", "cs.CL", "cs.NE", "stat.ML", "cs.MA"]
+    assert filters.core_allow == ["cs.LG", "cs.AI", "cs.CL", "cs.NE", "stat.ML", "cs.MA", "cs.PL"]
 
 
 def test_borderline_is_exactly_appendix_a() -> None:
-    assert filters.borderline == ["cs.IR", "cs.CY", "cs.DS", "math.OC"]
+    assert filters.borderline == [
+        "cs.IR",
+        "cs.CY",
+        "cs.DS",
+        "math.OC",
+        "cs.DC",
+        "cs.CE",
+        "cs.MS",
+    ]
 
 
 def test_applied_deny_includes_cs_cv_and_wildcards() -> None:
@@ -188,7 +196,12 @@ def test_r3_and_r5_weights_are_zero_at_r1() -> None:
 def test_active_r1_weights() -> None:
     assert ranking.weights.quality == 0.40
     assert ranking.weights.recency == 0.30
-    assert ranking.weights.hub == 0.60
+    # Negative. This asserted 0.60 to match a file that said "subtracted" in a
+    # comment beside a positive number -- so the test encoded the bug rather
+    # than the intent, and agreed with the code all the way to a real ranking
+    # that promoted hubs. `score_paper` multiplies; the sign here is the sign
+    # in the score.
+    assert ranking.weights.hub == -0.60
 
 
 def test_budget_fractions() -> None:
@@ -212,7 +225,12 @@ def test_config_version_is_sha256_of_file_contents() -> None:
     expected = hashlib.sha256(FILTERS_YAML.read_bytes()).hexdigest()
     assert expected.startswith(filters.config_version)
     assert len(filters.config_version) == 12
-    assert filters.config_version.islower()
+    # Lowercase hex, checked against the alphabet rather than with `islower()`.
+    # `islower()` is False for a string with no cased characters, so an
+    # all-digit hash -- about a 0.5% chance for 12 hex characters -- failed
+    # this assertion despite being perfectly valid. One did, which is how the
+    # bug was found.
+    assert set(filters.config_version) <= set("0123456789abcdef")
 
 
 def test_filters_and_ranking_have_independent_versions() -> None:

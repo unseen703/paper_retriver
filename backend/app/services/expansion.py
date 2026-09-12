@@ -31,6 +31,7 @@ from app.repo import papers as papers_repo
 from app.services.budget import allocate
 from app.services.candidates import build_pool, prescore
 from app.services.categories import CategoryResolver
+from app.services.features import compute_and_store_features
 from app.services.ingest import IngestStats, ingest_neighbour
 
 logger = logging.getLogger(__name__)
@@ -114,6 +115,25 @@ async def expand(
     citations_by_id = {p.id: p.citation_count for p in anchor_papers if p.id is not None}
 
     for anchor_id in anchors:
+        # **The cooperative-cancel checkpoint.** Between anchors, because that
+        # is a boundary where nothing is half-written: each anchor commits as
+        # it completes, so stopping here leaves the edges already fetched
+        # stored and the ones not yet requested unspent.
+        #
+        # Checked per anchor rather than per request: the fetch is where the
+        # API budget goes, and a cancel that only took effect at the end of the
+        # run would stop nothing worth stopping.
+        if result.expansion_id is not None:
+            with engine.connect() as conn:
+                if expansions_repo.is_cancelled(conn, session_id, result.expansion_id):
+                    logger.info(
+                        "expansion_cancelled_midrun session=%s job_id=%s anchors_done=%s",
+                        session_id,
+                        result.expansion_id,
+                        anchors.index(anchor_id),
+                    )
+                    return _finish(engine, session_id, result, "cancelled")
+
         s2_id = s2_by_id.get(anchor_id)
         if s2_id is None:
             continue
@@ -226,6 +246,23 @@ async def expand(
 
     result.api_calls = client.api_calls - calls_at_start
     result.cache_hits = client.cache_hits - hits_at_start
+
+    # (12) POST-COMMIT: recompute features for the whole session (R3).
+    #
+    # The whole session, not only the new nodes -- every feature is a
+    # rank-percentile *within the session*, so admitting one paper changes
+    # where all the others sit. Scoring only the arrivals would leave the
+    # existing graph ranked against a pool that no longer exists.
+    #
+    # Never fatal. The expansion has already committed; a feature pass that
+    # fails must not turn a successful run into an error and lose the papers
+    # it fetched. The scores stay stale until the next run or a PUT /api/config
+    # and that is visible, where a lost expansion would not be.
+    try:
+        compute_and_store_features(engine, session_id, as_of_year)
+    except Exception:  # noqa: BLE001 - a scoring failure must not cost the fetch
+        logger.exception("feature_pass_failed session=%s", session_id)
+
     return _finish(engine, session_id, result, None)
 
 

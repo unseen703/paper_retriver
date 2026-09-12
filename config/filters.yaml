@@ -7,18 +7,135 @@ paper_type_policy:
   DATASET:   { action: reject }
   POSITION:  { action: quarantine }
 
-CORE_ALLOW:   [cs.LG, cs.AI, cs.CL, cs.NE, stat.ML, cs.MA]
-BORDERLINE:   [cs.IR, cs.CY, cs.DS, math.OC]
+# cs.PL is core: "Program Synthesis with Large Language Models" and AlphaCode
+# are LLM-reasoning papers that happen to be filed under programming languages,
+# and they were arriving as CAT_NOT_ALLOWED -- refused for want of anyone having
+# classified the category, next to the ReAct and Reflexion work they belong
+# beside.
+CORE_ALLOW:   [cs.LG, cs.AI, cs.CL, cs.NE, stat.ML, cs.MA, cs.PL]
+# cs.DC, cs.CE and cs.MS sit next to ML systems work often enough to be worth a
+# look and not often enough to admit unread. QUARANTINE says "we are unsure";
+# CAT_NOT_ALLOWED said "nobody decided", which is a different and less useful
+# answer. Categories still absent from every list (quant-ph, gr-qc, cond-mat.*,
+# stat.ME) keep falling through deliberately.
+BORDERLINE:   [cs.IR, cs.CY, cs.DS, math.OC, cs.DC, cs.CE, cs.MS]
 APPLIED_DENY: [cs.CV, cs.RO, cs.SE, cs.HC, cs.CR, cs.DB, cs.NI, cs.SD,
                "q-bio.*", "q-fin.*", "eess.*", "physics.*", "econ.*", "astro-ph.*"]
 
 CORE_VENUES: [NeurIPS, ICML, ICLR, ACL, EMNLP, NAACL, AAAI, IJCAI,
               COLT, AISTATS, TMLR, JMLR, COLM, EACL, CoNLL]
 
+# Machine learning applied to chemical reactions -- retrosynthesis, reaction and
+# reactivity prediction. Checked BEFORE the category rules, because the papers
+# live under physics.chem-ph and q-bio, which APPLIED_DENY refuses.
+#
+# The wanted set is an intersection, not a category: most of physics.chem-ph is
+# spectroscopy and electronic structure and does not belong here, while the
+# retrosynthesis literature publishes into chemistry venues and would be missed
+# by a cs-only rule. These terms *are* the intersection -- a paper about
+# retrosynthesis is essentially always a machine-learning paper.
+#
+# Precision matters more than recall. A looser list ("reaction", "molecule",
+# "prediction") admits all of computational chemistry through a door meant for
+# a corridor of it, and the symptom is a graph that slowly fills with papers
+# nobody wanted. Every entry here is a term of art rather than a common word.
+reaction_ml_keywords:
+  - retrosynth            # retrosynthesis, retrosynthetic
+  - reaction prediction
+  - reaction outcome
+  - reactivity prediction
+  - reaction yield
+  - yield prediction
+  - synthesis planning
+  - synthesis prediction
+  - reaction condition
+  - catalyst design
+  - chemical reaction network
+
+# The second corridor: the same modelling problem with a protein catalyst.
+# Separate list and separate reason code (BIOCHEM_ML) from the chemistry terms
+# above, so the review drawer shows what each corridor admits and either can be
+# narrowed without disturbing the other.
+#
+# Terms that also read as ordinary biology carry their task word. Bare
+# 'catalytic site' would admit a DFT paper about zeolites; bare 'enzyme' would
+# admit crystallography. Precision is the risk here, not recall -- the symptom
+# of an over-eager list is a graph slowly filling with papers nobody wanted.
+biochem_ml_keywords:
+  # Metabolic reaction prediction
+  - metabolic pathway
+  - metabolic reaction
+  - retrobiosynth          # retrobiosynthesis, retrobiosynthetic
+  - biosynthetic pathway
+  - metabolite prediction
+  - biotransformation
+  # Enzyme reactive-site prediction
+  - active site prediction
+  - catalytic site prediction
+  - catalytic residue
+  - reactive site
+  - enzyme active site
+  # Enzyme function prediction
+  - enzyme function
+  - enzyme commission
+  - ec number
+  - enzyme annotation
+  - enzymatic reaction
+  - substrate specificity
+  # Binding sites and docking. THE WIDEST RULE HERE, added deliberately: these
+  # terms admit structure-based drug discovery, a large literature only partly
+  # about reactions. If the drawer's BIOCHEM_ML tab fills with docking papers,
+  # these four lines are what to delete.
+  - binding site
+  - binding affinity prediction
+  - protein-ligand
+  - molecular docking
+  # Protein function prediction -- the superset of enzyme function prediction,
+  # admitted by choice because the task is the same and the enzyme case cannot
+  # be separated from it without reading the paper. Structure prediction is NOT
+  # here and must not be: that is the AlphaFold literature, not this tool's.
+  #
+  # **Stored bare, and the task word left to vary.** These were originally
+  # written as whole task phrases -- 'protein function prediction' -- and a
+  # substring match recognises exactly one word order, so "predicting protein
+  # function" was refused while "protein function prediction" was admitted:
+  # the same paper, decided two ways by its grammar. `enzyme function` above
+  # was already bare and caught every phrasing, which is what made the
+  # inconsistency visible. Name the subject, not the sentence.
+  - protein function
+  - go term
+  - gene ontology
+  # Protein representation learning -- sequence models, not structure models.
+  #
+  # **A deliberate and imperfect split.** 263 papers in the corpus match
+  # structure/design vocabulary, and admitting all of them opens the whole
+  # AlphaFold-adjacent literature. These three terms take the sequence-modelling
+  # corner of it, which is the part that is machine learning about proteins
+  # rather than structural biology with a neural network in it.
+  #
+  # The boundary does not cut cleanly -- "Transformer protein language models
+  # are unsupervised structure learners" is a language-model paper whose result
+  # is structure -- so it is drawn on what the paper is *about*. The rest stay
+  # QUARANTINE rather than REJECT, so the review drawer can let any one of them
+  # in without a config change.
+  - protein language
+  - protein representation
+  - protein sequence
+
+# Applied-AI vocabulary for the APPLIED cascade stage (PLAN.md Appendix A).
+# A hit QUARANTINES, never auto-rejects.
+#
+# The chemistry terms are gone: this list used to carry 'molecul', 'protein
+# folding' and 'drug discovery', which penalised exactly the vocabulary the
+# reaction_ml_keywords above are meant to admit. The two would have pulled in
+# opposite directions the moment the APPLIED stage was built.
+#
+# The rest stay. Clinical, financial and agricultural applications are a
+# different question from chemistry, and PLAN.md still wants them held for
+# review.
 applied_keywords: [clinical, patient, radiolog, EHR, diagnosis, crop, agricultur,
-                   portfolio, stock return, credit risk, seismic, protein folding,
-                   molecul, drug discovery, wafer, churn, fraud detection]
-# keyword hits QUARANTINE only, never auto-reject
+                   portfolio, stock return, credit risk, seismic,
+                   wafer, churn, fraud detection]
 
 forward_expand_max: 2000
 max_reference_fetch: 200

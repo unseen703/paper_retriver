@@ -91,6 +91,72 @@ def test_a_clean_paper_reaches_accept(conn: Connection) -> None:
     assert d.outcome is Outcome.ACCEPT
 
 
+def test_a_biochemistry_paper_reaches_accept_through_the_whole_cascade(
+    conn: Connection,
+) -> None:
+    """
+    **End to end, not just `topic_filter`.** The unit tests prove the topic
+    stage admits these titles; this proves nothing upstream refuses them first.
+    Era and type run before topic and short-circuit, so a paper the topic stage
+    would welcome can still be thrown out by a stage that never mentions it.
+
+    The realistic shape matters: these are journal papers, so the arXiv category
+    is null and `q-bio.*` never appears. A rule keyed on category would find
+    none of them.
+    """
+    paper = _paper(
+        "biochem",
+        title="A general model for predicting enzyme functions based on enzymatic reactions",
+        primary_arxiv_category=None,
+        year=2023,
+    )
+    pid = _stored(conn, paper)
+    decision = run_cascade(conn, SESSION, pid, paper, cfg, AS_OF)
+
+    assert decision.outcome is Outcome.ACCEPT, decision.reason_code
+    assert decision.reason_code == "BIOCHEM_ML"
+
+
+def test_a_biochemistry_verdict_is_cached_like_any_other(conn: Connection) -> None:
+    """
+    An ACCEPT is re-evaluated rather than cached, so what this really checks is
+    that admitting through the new corridor files a decision row at the current
+    config version -- which is what keeps the paper out of the stale-verdict
+    exclusion `build_pool` applies.
+    """
+    paper = _paper(
+        "biochem2",
+        title="Metabolic pathway prediction with graph neural networks",
+        primary_arxiv_category=None,
+        year=2023,
+    )
+    pid = _stored(conn, paper)
+    run_cascade(conn, SESSION, pid, paper, cfg, AS_OF)
+
+    rows = [r for r in _decisions(conn) if r[0] == pid]
+    assert rows, "the verdict must be filed, or pooling cannot tell it was decided"
+    assert rows[-1][2] == "ACCEPT"
+    assert rows[-1][5] == cfg.config_version
+
+
+def test_a_pre_era_biochemistry_paper_is_still_refused(conn: Connection) -> None:
+    """
+    The corridor admits a *topic*, not a free pass. A 2010 metabolic-pathway
+    paper is still outside the corpus year floor, and era runs first.
+    """
+    paper = _paper(
+        "old-biochem",
+        title="Metabolic pathway prediction in silico",
+        primary_arxiv_category=None,
+        year=2010,
+    )
+    pid = _stored(conn, paper)
+    decision = run_cascade(conn, SESSION, pid, paper, cfg, AS_OF)
+
+    assert decision.outcome is not Outcome.ACCEPT
+    assert decision.reason_code == "PRE_ERA"
+
+
 def test_era_runs_first_and_short_circuits(conn: Connection) -> None:
     """
     A 2014 dataset paper must report PRE_ERA, not IS_DATASET. Era is the

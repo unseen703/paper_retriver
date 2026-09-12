@@ -33,7 +33,9 @@ from app.clients.s2 import (
     NEIGHBOR_FIELDS,
     SEARCH_FIELDS,
     S2Client,
+    S2Paper,
     S2TransientError,
+    to_paper,
 )
 from app.db import make_engine
 from app.models import CrawlState
@@ -378,3 +380,94 @@ async def test_no_api_key_header_when_none_configured(cache: ResponseCache) -> N
     client, rec = make_client(cache, lambda r: httpx.Response(200, json={"data": []}), api_key=None)
     await client.search_title("q")
     assert "x-api-key" not in rec.requests[0].headers
+
+
+# --------------------------------------------------------------------------
+# The arXiv id, and where S2 actually puts it
+# --------------------------------------------------------------------------
+
+
+def _ids(external: dict[str, object] | None) -> str | None:
+    paper = to_paper(S2Paper(paperId="p", title="A paper", externalIds=external))
+    assert paper is not None
+    return paper.arxiv_id
+
+
+def test_the_arxiv_key_is_used_when_present() -> None:
+    assert _ids({"ArXiv": "1706.03762"}) == "1706.03762"
+
+
+def test_the_arxiv_id_is_recovered_from_the_doi() -> None:
+    """
+    **The bug this exists for.** S2 frequently omits the `ArXiv` key for papers
+    that are plainly on arXiv, and puts the id in the DataCite DOI instead.
+    DeepSeek-R1 comes back with exactly this shape:
+
+        {"DBLP": "journals/corr/abs-2501-12948",
+         "DOI": "10.48550/arXiv.2501.12948",
+         "CorpusId": 284488789}
+
+    Reading only `ArXiv` left `arxiv_id` null, so nothing joined to the local
+    arXiv snapshot, so `primary_arxiv_category` was null, so `topic_filter`
+    fell past every category rule and quarantined a core ML paper as
+    FIELD_CS_ONLY -- with a reason code that pointed nowhere near the cause.
+    """
+    assert (
+        _ids(
+            {
+                "DBLP": "journals/corr/abs-2501-12948",
+                "DOI": "10.48550/arXiv.2501.12948",
+                "CorpusId": 284488789,
+            }
+        )
+        == "2501.12948"
+    )
+
+
+def test_the_explicit_key_wins_over_the_doi() -> None:
+    """A fallback, not a replacement: when S2 says ArXiv, that is the answer."""
+    assert _ids({"ArXiv": "2210.03821", "DOI": "10.48550/arXiv.9999.99999"}) == "2210.03821"
+
+
+def test_the_doi_match_is_case_insensitive() -> None:
+    """S2 returns the capitalisation inconsistently -- arxiv, arXiv, ArXiv."""
+    assert _ids({"DOI": "10.48550/arxiv.2210.03821"}) == "2210.03821"
+
+
+def test_an_ordinary_doi_yields_no_arxiv_id() -> None:
+    """
+    Vygotsky's *Thinking and Speech* arrives as a Springer chapter. Inventing
+    an arXiv id here would send it to the snapshot to be joined against nothing,
+    and a wrong id is worse than a missing one.
+    """
+    assert _ids({"DOI": "10.1007/978-981-10-4625-4_21"}) is None
+
+
+def test_no_external_ids_at_all_is_not_an_error() -> None:
+    assert _ids(None) is None
+    assert _ids({}) is None
+
+
+def test_a_versioned_doi_loses_its_version_suffix() -> None:
+    """
+    arXiv mints a DOI per submission *version*, so the fallback can see
+    `10.48550/arXiv.2501.12948v2` where the explicit `ArXiv` key would have been
+    the bare `2501.12948`.
+
+    `arxiv_meta` is keyed on bare ids and looked up with an exact match, so a
+    versioned id misses, `primary_arxiv_category` stays null, and `topic_filter`
+    falls through to FIELD_CS_ONLY -- silently reproducing the bug this fallback
+    was added to fix.
+
+    Latent rather than active: none of the 259 arXiv DOIs in the current corpus
+    carry a version. `dedup.strip_arxiv_version` already existed for exactly
+    this shape, and is reused here rather than re-expressed, so the two cannot
+    disagree about what a version suffix looks like.
+    """
+    assert _ids({"DOI": "10.48550/arXiv.2501.12948v2"}) == "2501.12948"
+    assert _ids({"DOI": "10.48550/arXiv.1706.03762v11"}) == "1706.03762"
+
+
+def test_an_old_style_arxiv_doi_keeps_its_subject_prefix() -> None:
+    """`cs.CV/0701001` is a whole id, not an id with a version on it."""
+    assert _ids({"DOI": "10.48550/arXiv.cs.CV/0701001"}) == "cs.CV/0701001"

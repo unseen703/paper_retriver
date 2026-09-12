@@ -274,6 +274,83 @@ def test_a_restored_paper_is_a_candidate_again(conn: Connection) -> None:
     assert [e.paper_id for e in build_pool(conn, SESSION, [anchor], cfg, AS_OF)] == [paper]
 
 
+def _reject(conn: Connection, paper_id: int, version: str, *, outcome: str = "REJECT") -> None:
+    """File a verdict under a given config version, as the cascade would."""
+    from app.repo import filter_decisions as decisions_repo
+    from app.services.filters.base import FilterStage, quarantine, reject
+
+    maker = reject if outcome == "REJECT" else quarantine
+    decisions_repo.record(
+        conn, SESSION, paper_id, maker(FilterStage.TOPIC, "FIELD_NON_CS"), version
+    )
+
+
+def test_a_paper_rejected_under_the_current_config_stays_out(conn: Connection) -> None:
+    """
+    The clause that must keep working. A rejection stores a decision row but no
+    graph node, so nothing else keeps the paper out of the pool.
+    """
+    anchor = _add(conn, "anchor")
+    refused = _add(conn, "refused")
+    edges_repo.upsert_edge(conn, anchor, refused, "BACKWARD")
+    _reject(conn, refused, cfg.config_version)
+
+    assert build_pool(conn, SESSION, [anchor], cfg, AS_OF) == []
+
+
+def test_a_paper_rejected_under_an_older_config_is_pooled_again(conn: Connection) -> None:
+    """
+    **The bug this section exists for.**
+
+    `repo/filter_decisions.py` states its own contract: "A cached verdict is
+    only valid for the `config_version` that produced it." `find_global_rejection`
+    honours it; `non_accepted_paper_ids` did not, so the exclusion pass dropped
+    the paper from the pool *before* the cascade could re-evaluate it -- making
+    the version-scoped cache unreachable for exactly the papers it exists to
+    re-open.
+
+    The symptom was silence. Editing `filters.yaml` re-stamped `config_version`
+    and appeared to work, while every paper already refused under an older
+    version stayed refused for good. On the real corpus that was 390 papers
+    held out by verdicts two config versions old, 67 of which the current rules
+    admit.
+    """
+    anchor = _add(conn, "anchor")
+    paper = _add(conn, "paper")
+    edges_repo.upsert_edge(conn, anchor, paper, "BACKWARD")
+    _reject(conn, paper, "0ldc0nf1g")
+
+    assert [e.paper_id for e in build_pool(conn, SESSION, [anchor], cfg, AS_OF)] == [paper]
+
+
+def test_a_stale_quarantine_is_also_re_opened(conn: Connection) -> None:
+    """
+    QUARANTINE means "we could not tell", which is a judgement the config makes
+    -- so it goes stale exactly as a rejection does. Most of the biochemistry
+    papers this surfaced were quarantined NO_SIGNAL, not rejected.
+    """
+    anchor = _add(conn, "anchor")
+    paper = _add(conn, "paper")
+    edges_repo.upsert_edge(conn, anchor, paper, "BACKWARD")
+    _reject(conn, paper, "0ldc0nf1g", outcome="QUARANTINE")
+
+    assert [e.paper_id for e in build_pool(conn, SESSION, [anchor], cfg, AS_OF)] == [paper]
+
+
+def test_a_current_verdict_wins_over_a_stale_one(conn: Connection) -> None:
+    """
+    A paper can carry verdicts from several versions at once -- `record` only
+    replaces rows for the version it is writing. The current one decides.
+    """
+    anchor = _add(conn, "anchor")
+    paper = _add(conn, "paper")
+    edges_repo.upsert_edge(conn, anchor, paper, "BACKWARD")
+    _reject(conn, paper, "0ldc0nf1g")
+    _reject(conn, paper, cfg.config_version)
+
+    assert build_pool(conn, SESSION, [anchor], cfg, AS_OF) == []
+
+
 def test_exclusion_is_per_session(conn: Connection) -> None:
     from sqlalchemy import text
 
