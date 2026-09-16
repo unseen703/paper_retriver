@@ -27,6 +27,7 @@ import {
   positionsToSave,
   inTopicGroup,
   partitionByTopic,
+  separateOverlaps,
 } from "./graphInteraction";
 
 function node(id: number, over: Partial<GraphNodeOut> = {}): GraphNodeOut {
@@ -378,5 +379,120 @@ describe("inTopicGroup", () => {
   it("matches everything when the filter is off", () => {
     const nodes = [{ id: 1, primary_arxiv_category: "cs.LG", title: "x" }];
     expect(partitionByTopic(nodes, "all")).toEqual({ matched: [1], rest: [] });
+  });
+});
+
+describe("separateOverlaps", () => {
+  /**
+   * Journey:
+   *
+   *     As someone reading a citation graph, I want to be able to tell two
+   *     papers apart, so a node hiding behind another is not simply invisible.
+   *
+   * fcose's `nodeRepulsion` and `nodeSeparation` are *forces*: they push
+   * overlapping nodes apart and settle wherever the forces balance, which in a
+   * dense cluster is still overlapping. Nothing in a force layout guarantees
+   * the property "no two discs intersect" — so it is enforced afterwards,
+   * deterministically, which is also what makes it testable.
+   *
+   * Sizes vary a lot here (radius scales with log citations), so the check has
+   * to be against each pair's own radii rather than one global spacing.
+   */
+  const at = (id: number, x: number, y: number, r = 10) => ({ id, x, y, r });
+
+  function minGapBetween(placed: ReturnType<typeof separateOverlaps>, a: number, b: number) {
+    const pa = placed.get(a)!;
+    const pb = placed.get(b)!;
+    return Math.hypot(pa.x - pb.x, pa.y - pb.y);
+  }
+
+  it("pushes two overlapping nodes apart", () => {
+    const out = separateOverlaps([at(1, 0, 0), at(2, 5, 0)], 6);
+    // Two radius-10 discs need 20 between centres, plus the 6 gap.
+    expect(minGapBetween(out, 1, 2)).toBeGreaterThanOrEqual(26 - 1e-6);
+  });
+
+  it("leaves nodes that already clear each other alone", () => {
+    // Moving something that was fine would undo the layout's own decisions.
+    const input = [at(1, 0, 0), at(2, 500, 0)];
+    const out = separateOverlaps(input, 6);
+    expect(out.get(1)).toEqual({ x: 0, y: 0 });
+    expect(out.get(2)).toEqual({ x: 500, y: 0 });
+  });
+
+  it("respects each node's own radius", () => {
+    // A 40-radius hub beside a 5-radius stub needs 45 between centres, not the
+    // 20 a single global spacing would assume.
+    const out = separateOverlaps([at(1, 0, 0, 40), at(2, 10, 0, 5)], 4);
+    expect(minGapBetween(out, 1, 2)).toBeGreaterThanOrEqual(49 - 1e-6);
+  });
+
+  it("separates a dense pile, not just a pair", () => {
+    // The real case: the screenshot's centre, where a dozen nodes sit on top
+    // of one another.
+    const pile = Array.from({ length: 12 }, (_, i) => at(i, i * 0.5, 0, 10));
+    const out = separateOverlaps(pile, 6);
+    for (let a = 0; a < 12; a += 1) {
+      for (let b = a + 1; b < 12; b += 1) {
+        expect(minGapBetween(out, a, b)).toBeGreaterThanOrEqual(26 - 1e-3);
+      }
+    }
+  });
+
+  it("separates nodes that share an exact position", () => {
+    // Distance zero has no direction to push along, so it needs a deterministic
+    // nudge rather than a division by zero.
+    const out = separateOverlaps([at(1, 100, 100), at(2, 100, 100)], 6);
+    const d = minGapBetween(out, 1, 2);
+    expect(Number.isFinite(d)).toBe(true);
+    expect(d).toBeGreaterThanOrEqual(26 - 1e-3);
+  });
+
+  it("is deterministic", () => {
+    // CLAUDE.md rule 7. A layout that settles differently each run cannot be
+    // saved and restored, which is what R2.12 depends on.
+    const input = [at(1, 0, 0), at(2, 3, 1), at(3, 1, 2)];
+    expect(separateOverlaps(input, 6)).toEqual(separateOverlaps(input, 6));
+  });
+
+  it("returns every node it was given", () => {
+    const out = separateOverlaps([at(1, 0, 0), at(2, 1, 0), at(3, 900, 900)], 6);
+    expect([...out.keys()].sort()).toEqual([1, 2, 3]);
+  });
+
+  it("never moves a pinned node", () => {
+    /**
+     * A pinned node is somewhere the user put it. PLAN.md M6 is explicit that
+     * an expansion must grow the graph outward rather than rearrange a picture
+     * someone has learned, and shoving a deliberately-placed paper aside to
+     * make room is the same loss by another route.
+     *
+     * The mobile node therefore absorbs the whole push, not half of it.
+     */
+    const out = separateOverlaps([at(1, 0, 0), at(2, 5, 0)], 6, new Set([1]));
+    expect(out.get(1)).toEqual({ x: 0, y: 0 });
+    expect(minGapBetween(out, 1, 2)).toBeGreaterThanOrEqual(26 - 1e-6);
+  });
+
+  it("leaves two pinned nodes overlapping rather than moving either", () => {
+    // Both were placed on purpose. Overriding one of them to satisfy a spacing
+    // rule would be the tool arguing with the user about their own arrangement.
+    const out = separateOverlaps([at(1, 0, 0), at(2, 5, 0)], 6, new Set([1, 2]));
+    expect(out.get(1)).toEqual({ x: 0, y: 0 });
+    expect(out.get(2)).toEqual({ x: 5, y: 0 });
+  });
+
+  it("handles an empty graph and a single node", () => {
+    expect(separateOverlaps([], 6).size).toBe(0);
+    expect(separateOverlaps([at(1, 5, 5)], 6).get(1)).toEqual({ x: 5, y: 5 });
+  });
+
+  it("produces finite coordinates", () => {
+    // positionsToSave drops non-finite values, so a NaN here would silently
+    // lose the node's saved position rather than fail loudly.
+    const out = separateOverlaps([at(1, 0, 0), at(2, 0, 0), at(3, 0, 0)], 6);
+    for (const p of out.values()) {
+      expect(Number.isFinite(p.x) && Number.isFinite(p.y)).toBe(true);
+    }
   });
 });

@@ -116,7 +116,124 @@ export function partitionByQuery(
  * somewhere to live outside a Cytoscape layout callback.
  */
 export function nodeRepulsion(state: GraphNodeOut["state"] | null | undefined): number {
-  return state === "SEED" || state === "LIKED" ? 20000 : 6000;
+  // Raised from 20000 after looking at a 127-node graph: the seeds were
+  // sitting inside the candidate cloud rather than anchoring separate regions
+  // of it, so the structure the graph exists to show was not visible. At 55000
+  // each seed clears a space around itself and the clusters read as clusters.
+  //
+  // The candidate figure stays where it is on purpose. Raising both would
+  // scale the whole picture up without separating anything, since a force
+  // applied everywhere changes nothing about the relative arrangement.
+  return state === "SEED" || state === "LIKED" ? 55000 : 6000;
+}
+
+/** A laid-out node, with the radius it actually occupies on screen. */
+export interface Placed {
+  id: number;
+  x: number;
+  y: number;
+  /** Half the rendered width. Sizes vary a lot: radius scales with citations. */
+  r: number;
+}
+
+/** How many relaxation passes before giving up on a pathological pile. */
+const MAX_SEPARATION_PASSES = 200;
+
+/**
+ * Push overlapping nodes apart until no two discs intersect.
+ *
+ * **A force layout cannot promise this, which is why it runs afterwards.**
+ * fcose's `nodeRepulsion` and `nodeSeparation` are forces: they push
+ * overlapping nodes apart and then settle wherever all the forces balance,
+ * and in a dense cluster that equilibrium is still overlapping. Turning the
+ * forces up far enough to clear every pair blows the rest of the graph apart,
+ * because the same force acts everywhere.
+ *
+ * So the layout decides the *shape* and this enforces the one property the
+ * shape cannot guarantee. It moves nothing that already clears its neighbours,
+ * so the arrangement fcose chose survives.
+ *
+ * **Pairwise against each node's own radius**, not one global spacing: a
+ * 40-radius hub beside a 5-radius stub needs 45 between centres, and a single
+ * number would either leave the hub overlapping or scatter the stubs.
+ *
+ * Deterministic (CLAUDE.md rule 7): nodes are processed in id order and two
+ * nodes at the same point are nudged along a fixed axis rather than a random
+ * one, so a saved layout restores to the same picture.
+ */
+export function separateOverlaps(
+  nodes: readonly Placed[],
+  gap = 8,
+  /**
+   * Nodes that must not move: dragged, or restored from a saved layout.
+   *
+   * PLAN.md M6 says an expansion must grow the graph outward rather than
+   * rearrange a picture someone has learned, and shoving a deliberately-placed
+   * paper aside to make room is the same loss by another route. A mobile
+   * neighbour absorbs the whole push instead of half of it; two pinned nodes
+   * are left overlapping, because overriding one of them would be the tool
+   * arguing with the user about their own arrangement.
+   */
+  fixed: ReadonlySet<number> = new Set(),
+  maxPasses = MAX_SEPARATION_PASSES,
+): Map<number, { x: number; y: number }> {
+  // Sorted so the result does not depend on the order the graph arrived in.
+  const working = [...nodes]
+    .sort((a, b) => a.id - b.id)
+    .map((n) => ({ id: n.id, x: n.x, y: n.y, r: n.r }));
+
+  for (let pass = 0; pass < maxPasses; pass += 1) {
+    let moved = false;
+
+    for (let i = 0; i < working.length; i += 1) {
+      for (let j = i + 1; j < working.length; j += 1) {
+        const a = working[i];
+        const b = working[j];
+        const needed = a.r + b.r + gap;
+
+        let dx = b.x - a.x;
+        let dy = b.y - a.y;
+        let distance = Math.hypot(dx, dy);
+
+        if (distance >= needed) continue;
+
+        if (distance === 0) {
+          // No direction to push along. A fixed axis keeps this reproducible;
+          // a random one would make the same graph settle differently each run
+          // and break R2.12's saved layouts.
+          dx = 1;
+          dy = 0;
+          distance = 1;
+        }
+
+        const aFixed = fixed.has(a.id);
+        const bFixed = fixed.has(b.id);
+        // Both placed on purpose: leave them, and leave them overlapping.
+        if (aFixed && bFixed) continue;
+
+        // Half the shortfall each when both may move, so neither is privileged
+        // and the pair's midpoint stays where the layout put it. When one is
+        // pinned the other takes the whole shortfall.
+        const shortfall = needed - distance;
+        const aShare = aFixed ? 0 : bFixed ? shortfall : shortfall / 2;
+        const bShare = bFixed ? 0 : aFixed ? shortfall : shortfall / 2;
+        const nx = dx / distance;
+        const ny = dy / distance;
+
+        a.x -= nx * aShare;
+        a.y -= ny * aShare;
+        b.x += nx * bShare;
+        b.y += ny * bShare;
+        moved = true;
+      }
+    }
+
+    // Converges in a handful of passes for anything but a deliberate pile;
+    // stopping early is what keeps this cheap on a large graph.
+    if (!moved) break;
+  }
+
+  return new Map(working.map((n) => [n.id, { x: n.x, y: n.y }]));
 }
 
 /** One node's saved place, in the shape `PUT /positions` accepts. */
