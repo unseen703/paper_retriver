@@ -1817,6 +1817,8 @@ export interface operations {
                 limit?: number;
                 /** @description Column to order by, descending. */
                 sort?: "score" | "year" | "citations";
+                /** @description Rows to skip, for paging past the first page. */
+                offset?: number;
             };
             header?: never;
             path: {

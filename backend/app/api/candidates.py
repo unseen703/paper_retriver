@@ -89,6 +89,10 @@ def list_candidates(
         SortKey,
         Query(description="Column to order by, descending."),
     ] = "score",
+    offset: Annotated[
+        int,
+        Query(ge=0, description="Rows to skip, for paging past the first page."),
+    ] = 0,
 ) -> CandidatesResponse:
     """This session's candidates, ranked."""
     with engine.connect() as conn:
@@ -122,7 +126,15 @@ def list_candidates(
 
     rows.sort(key=lambda row: _sort_key(sort, row))
 
-    # `total` counts every candidate, not the page. Truncating first and
-    # reporting the truncated length would tell a reader looking at 50 rows
-    # that 50 is all there is.
-    return CandidatesResponse(candidates=rows[:limit], total=len(rows))
+    # **Paging.** With `limit` capped at 500 and no offset, candidate 501 was
+    # simply unreachable -- and `max_nodes` validates up to 100,000, so the
+    # shipped ceiling sat two orders of magnitude past what could be read back.
+    #
+    # Walking the pages sees every row exactly once because the sort is total:
+    # ties break on `paper_id`, so the order is identical on every request and
+    # a row cannot slip between pages or appear in two.
+    #
+    # `total` stays the whole set, not the page. It is what tells a pager how
+    # many pages there are, and making it relative to the current page would
+    # make it useless for exactly that.
+    return CandidatesResponse(candidates=rows[offset : offset + limit], total=len(rows))

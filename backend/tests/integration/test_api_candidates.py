@@ -385,3 +385,72 @@ def test_a_node_whose_paper_is_gone_is_skipped_not_fatal(
     graph.orphan("broken")
 
     assert _titles(_get(client)) == ["Paper good"]
+
+
+# --------------------------------------------------------------------------
+# Paging -- reaching past the first page
+# --------------------------------------------------------------------------
+#
+# Code review's finding: the endpoint sorts the whole candidate set and slices
+# the top `limit`, and with `limit` capped at 500 and no `offset` at all,
+# candidate 501 was simply unreachable. `max_nodes` validates up to 100,000, so
+# the shipped ceiling is two orders of magnitude past what could be read back.
+
+
+def test_offset_skips_the_rows_before_it(client: TestClient, engine: Engine) -> None:
+    graph = Graph(engine)
+    graph.node("first", score=0.9).node("second", score=0.5).node("third", score=0.1)
+
+    assert _titles(_get(client, offset=1)) == ["Paper second", "Paper third"]
+
+
+def test_a_page_past_the_end_is_empty_rather_than_an_error(
+    client: TestClient, engine: Engine
+) -> None:
+    # Running off the end of a list is an ordinary thing for a paging client to
+    # do, and a 404 or a 422 would make it look like a mistake.
+    Graph(engine).node("only", score=0.5)
+    payload = _get(client, offset=50)
+    assert payload["candidates"] == []
+    assert payload["total"] == 1
+
+
+def test_total_counts_the_whole_set_whatever_the_offset(client: TestClient, engine: Engine) -> None:
+    # `total` is what tells a pager how many pages there are; making it relative
+    # to the current page would make it useless for exactly that.
+    graph = Graph(engine)
+    for i in range(5):
+        graph.node(f"p{i}", score=float(i))
+    assert _get(client, offset=3)["total"] == 5
+
+
+def test_paging_covers_every_row_exactly_once(client: TestClient, engine: Engine) -> None:
+    """
+    The property that makes paging worth having: walking the pages sees the
+    whole set, with nothing repeated and nothing skipped. It holds because the
+    sort is total -- ties break on `paper_id` -- so the order is the same on
+    every request.
+    """
+    graph = Graph(engine)
+    for i in range(7):
+        graph.node(f"p{i}", score=1.0)  # every score identical, so ties decide
+
+    walked: list[str] = []
+    for offset in (0, 3, 6):
+        walked.extend(_titles(_get(client, limit=3, offset=offset)))
+
+    assert len(walked) == 7
+    assert len(set(walked)) == 7
+
+
+def test_a_negative_offset_is_rejected(client: TestClient) -> None:
+    # Python would read it as "from the end", which is a different feature
+    # nobody asked for and a surprising one to discover by accident.
+    response = client.get(f"/api/sessions/{SID}/candidates", params={"offset": -1})
+    assert response.status_code == 422
+
+
+def test_no_offset_behaves_exactly_as_before(client: TestClient, engine: Engine) -> None:
+    graph = Graph(engine)
+    graph.node("a", score=0.9).node("b", score=0.5)
+    assert _titles(_get(client)) == _titles(_get(client, offset=0))
