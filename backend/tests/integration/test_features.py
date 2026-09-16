@@ -73,19 +73,21 @@ class Graph:
         citations: int = 10,
         overlap: int | None = None,
         crawled: bool = True,
+        venue: str | None = None,
     ) -> Graph:
         with self.engine.begin() as conn:
             paper_id = conn.execute(
                 text(
                     "INSERT INTO papers (s2_paper_id, title, title_norm, first_seen_at, year,"
-                    " citation_count, crawl_state)"
-                    " VALUES (:s, :t, :t, '2026-01-01', :y, :c, :cs) RETURNING id"
+                    " citation_count, venue, crawl_state)"
+                    " VALUES (:s, :t, :t, '2026-01-01', :y, :c, :v, :cs) RETURNING id"
                 ),
                 {
                     "s": name,
                     "t": f"Paper {name}",
                     "y": year,
                     "c": citations,
+                    "v": venue,
                     "cs": "METADATA" if crawled else "STUB",
                 },
             ).scalar()
@@ -264,7 +266,11 @@ def test_the_feature_names_match_the_configured_weights(engine: Engine) -> None:
     fact worth stating, and it makes adding one a deliberate edit here.
     """
     weights = set(load_ranking().weights.model_dump())
-    not_yet = {"ppr", "venue", "author", "dislike"}
+    # `venue` left this list at R3.d. `ppr` and `dislike` arrive at R5; `author`
+    # is deferred past R4 because PLAN.md C4 demotes it and it costs a per-paper
+    # S2 fetch, so paying for it before the benchmark can say whether it helps
+    # is backwards.
+    not_yet = {"ppr", "author", "dislike"}
     assert set(FEATURE_NAMES) == weights - not_yet
 
 
@@ -308,3 +314,61 @@ def test_another_session_is_untouched(engine: Engine) -> None:
             is None
         )
     assert graph is not None
+
+
+# --------------------------------------------------------------------------
+# R3.d -- venue tier
+# --------------------------------------------------------------------------
+
+
+def test_a_core_venue_scores_higher_than_an_unknown_one(engine: Engine) -> None:
+    """
+    BUILD.md's R3 bullet. NeurIPS is on CORE_VENUES; a preprint server is not,
+    and neither is a venue nobody listed.
+    """
+    graph = Graph(engine).node("core", venue="Neural Information Processing Systems")
+    graph.node("other", venue="arXiv.org")
+    compute_and_store_features(engine, SID, as_of_year=AS_OF)
+    assert graph.features("core")["venue"] > graph.features("other")["venue"]
+
+
+def test_the_venue_is_matched_by_acronym_too(engine: Engine) -> None:
+    """
+    S2 reports the same conference both ways -- "NeurIPS" and "Neural
+    Information Processing Systems" -- so matching only the expansion would
+    score the same venue differently depending on which spelling arrived.
+    """
+    graph = Graph(engine).node("acronym", venue="NeurIPS").node("nothing", venue="Some Journal")
+    compute_and_store_features(engine, SID, as_of_year=AS_OF)
+    assert graph.features("acronym")["venue"] > graph.features("nothing")["venue"]
+
+
+def test_a_missing_venue_is_not_a_core_venue(engine: Engine) -> None:
+    """
+    CLAUDE.md rule 6: a missing field degrades a score, never raises. Most of
+    the corpus is stubs with no venue at all, so this is the common path rather
+    than an edge case.
+    """
+    graph = Graph(engine).node("none", venue=None).node("core", venue="ICML")
+    compute_and_store_features(engine, SID, as_of_year=AS_OF)
+    assert graph.features("none")["venue"] < graph.features("core")["venue"]
+
+
+def test_venue_is_derived_from_config_not_read_from_the_column(engine: Engine) -> None:
+    """
+    **`papers.venue_tier` stays empty on purpose.**
+
+    A stored tier is a second copy of a decision the config owns, and it goes
+    stale the moment CORE_VENUES changes -- exactly the failure that let stale
+    `filter_decisions` exclude papers the current rules admit. The tier is
+    computed from `papers.venue` against the *current* `CORE_VENUES` every time
+    features are recomputed, so there is nothing to go stale.
+    """
+    graph = Graph(engine).node("core", venue="ICLR")
+    compute_and_store_features(engine, SID, as_of_year=AS_OF)
+    with engine.connect() as conn:
+        stored = conn.execute(
+            text("SELECT venue_tier FROM papers WHERE id = :p"), {"p": graph.ids["core"]}
+        ).scalar()
+    assert stored is None, "the column is deliberately not written"
+    assert graph.features("core")["venue"] > 0

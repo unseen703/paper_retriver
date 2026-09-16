@@ -188,9 +188,33 @@ def test_overlap_is_the_dominant_r1_weight() -> None:
     )
 
 
-def test_r3_and_r5_weights_are_zero_at_r1() -> None:
-    for name in ("ppr", "cocite", "bibcoup", "venue", "author", "dislike"):
-        assert getattr(ranking.weights, name) == 0.0, f"{name} should be inert until R3+"
+def test_the_unimplemented_weights_stay_inert() -> None:
+    """
+    `ppr` and `dislike` arrive at R5; `author` is deferred past R4 because
+    PLAN.md C4 demotes it and it costs a per-paper S2 fetch. A weight with no
+    feature behind it would be a lever connected to nothing (CLAUDE.md rule 8).
+    """
+    for name in ("ppr", "author", "dislike"):
+        assert getattr(ranking.weights, name) == 0.0, f"{name} has no feature yet"
+
+
+def test_the_local_similarity_weights_are_computed_but_still_off() -> None:
+    """
+    `cocite` and `bibcoup` ARE computed and persisted -- the lever is connected,
+    it is simply turned down. Session 2 gives them real signal (334 coupled, 48
+    co-cited), so turning them up is one PUT away; what is missing is the
+    benchmark to say by how much, which is R4.
+    """
+    assert ranking.weights.cocite == 0.0
+    assert ranking.weights.bibcoup == 0.0
+
+
+def test_venue_carries_weight_now_that_it_is_computed(ranking_cfg: None = None) -> None:
+    """
+    R3.d. Left at 0.00 the feature would be computed, normalized and stored on
+    every node while changing no ranking at all -- the dormant half of rule 8.
+    """
+    assert ranking.weights.venue > 0
 
 
 def test_active_r1_weights() -> None:

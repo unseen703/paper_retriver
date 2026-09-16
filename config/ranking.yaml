@@ -6,7 +6,12 @@ weights:
   overlap:  2.00   # R1  <- dominant. Start here.
   quality:  0.40
   recency:  0.30
-  venue:    0.00   # R3
+  # R3.d. A venue on CORE_VENUES is weak evidence of quality that is
+  # independent of citation count, which matters most for recent papers that
+  # have not had time to accumulate citations. Modest on purpose: it is a
+  # proxy, and a starting point for R4 to tune against the benchmark rather
+  # than a number anyone measured.
+  venue:    0.20
   author:   0.00   # R3, cold-start only
   # Negative, not "positive with a comment saying subtracted". `score_paper`
   # multiplies, so the sign in this file is the sign in the score -- a positive

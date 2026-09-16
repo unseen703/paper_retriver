@@ -33,7 +33,8 @@ import logging
 
 from sqlalchemy import Engine, text
 
-from app.config import ranking
+from app.config import filters, ranking
+from app.services.filters.topic_filter import is_core_venue
 from app.services.graphops import compute_signals
 from app.services.ranking import citations_per_year, rank_percentile, recency, score_paper
 from app.services.similarity import compute_similarity
@@ -42,10 +43,10 @@ logger = logging.getLogger(__name__)
 
 #: The features this module computes, matching weight names in `ranking.yaml`.
 #:
-#: `ppr`, `venue`, `author` and `dislike` are deliberately absent -- they are
-#: weighted at 0.00 and not yet implemented, and inventing a value for them
-#: would put a number behind a lever that does nothing.
-FEATURE_NAMES = ("overlap", "quality", "recency", "hub", "cocite", "bibcoup")
+#: `ppr`, `author` and `dislike` are deliberately absent -- they are weighted
+#: at 0.00 and not yet implemented, and inventing a value for them would put a
+#: number behind a lever that does nothing.
+FEATURE_NAMES = ("overlap", "quality", "recency", "hub", "cocite", "bibcoup", "venue")
 
 #: States whose papers anchor "related to what?". The same set the sweep marks
 #: from and the expander builds its frontier from.
@@ -54,12 +55,12 @@ ANCHOR_STATES = ("SEED", "LIKED")
 
 def _rows(
     engine: Engine, session_id: int
-) -> list[tuple[int, str, int | None, int, dict[str, float]]]:
-    """(paper_id, state, year, citation_count, existing features) for the session."""
+) -> list[tuple[int, str, int | None, int, str | None, dict[str, float]]]:
+    """(paper_id, state, year, citation_count, venue, existing features)."""
     with engine.connect() as conn:
         rows = conn.execute(
             text(
-                "SELECT g.paper_id, g.state, p.year, p.citation_count, g.features"
+                "SELECT g.paper_id, g.state, p.year, p.citation_count, p.venue, g.features"
                 " FROM graph_nodes g JOIN papers p ON p.id = g.paper_id"
                 # Sorted so two runs write in the same order and agree byte for
                 # byte (CLAUDE.md rule 7).
@@ -68,8 +69,8 @@ def _rows(
             {"sid": session_id},
         ).fetchall()
 
-    out: list[tuple[int, str, int | None, int, dict[str, float]]] = []
-    for paper_id, state, year, citations, raw in rows:
+    out: list[tuple[int, str, int | None, int, str | None, dict[str, float]]] = []
+    for paper_id, state, year, citations, venue, raw in rows:
         try:
             existing = json.loads(raw) if raw else {}
         except (json.JSONDecodeError, TypeError):
@@ -80,6 +81,7 @@ def _rows(
                 str(state),
                 int(year) if year is not None else None,
                 int(citations or 0),
+                str(venue) if venue else None,
                 existing if isinstance(existing, dict) else {},
             )
         )
@@ -107,14 +109,14 @@ def compute_and_store_features(
 
     with engine.connect() as conn:
         signals = compute_signals(conn, session_id)
-        anchors = [pid for pid, state, _, _, _ in rows if state in ANCHOR_STATES]
+        anchors = [pid for pid, state, _, _, _, _ in rows if state in ANCHOR_STATES]
         similarity = compute_similarity(conn, anchors)
 
     # Raw values first, one dict per feature across the whole session -- the
     # normalization pool is the session, so it has to be gathered before
     # anything is ranked.
     raw: dict[str, dict[int, float]] = {name: {} for name in FEATURE_NAMES}
-    for paper_id, _, year, citations, existing in rows:
+    for paper_id, _, year, citations, venue, existing in rows:
         raw["overlap"][paper_id] = float(existing.get("anchor_overlap") or 0)
         raw["quality"][paper_id] = citations_per_year(citations, year, as_of_year)
         raw["recency"][paper_id] = recency(year, as_of_year)
@@ -123,13 +125,19 @@ def compute_and_store_features(
         raw["hub"][paper_id] = float(signals.in_degree.get(paper_id, 0))
         raw["cocite"][paper_id] = float(similarity.co_citation.get(paper_id, 0))
         raw["bibcoup"][paper_id] = float(similarity.bib_coupling.get(paper_id, 0))
+        # **Derived from the config, never read from `papers.venue_tier`.** That
+        # column stays empty on purpose: a stored tier is a second copy of a
+        # decision CORE_VENUES owns, and it goes stale the moment the list
+        # changes -- the same failure that let stale `filter_decisions` exclude
+        # papers the current rules admit. Recomputing costs a string match.
+        raw["venue"][paper_id] = 1.0 if is_core_venue(venue, filters.core_venues) else 0.0
 
     normalized = {name: rank_percentile(values) for name, values in raw.items()}
 
     active = weights if weights is not None else ranking.weights.model_dump()
     written = 0
     with engine.begin() as conn:
-        for paper_id, _, _, _, _ in rows:
+        for paper_id, _, _, _, _, _ in rows:
             features = {name: float(normalized[name][paper_id]) for name in FEATURE_NAMES}
             total, breakdown = score_paper(features, active)
             conn.execute(
