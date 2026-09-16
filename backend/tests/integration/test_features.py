@@ -372,3 +372,47 @@ def test_venue_is_derived_from_config_not_read_from_the_column(engine: Engine) -
         ).scalar()
     assert stored is None, "the column is deliberately not written"
     assert graph.features("core")["venue"] > 0
+
+
+def test_a_pool_with_no_core_venue_scores_venue_zero_not_neutral(engine: Engine) -> None:
+    """
+    **Found in review, and it lands on the one component that must not lie.**
+
+    `venue` is binary, and `rank_percentile` returns NEUTRAL (0.5) whenever a
+    pool has a single distinct value -- the honest answer for a continuous
+    feature where nothing distinguishes anyone, and the wrong one here. In a
+    session whose candidates happen to include no core-venue paper, every paper
+    scored 0.5, and at weight 0.20 `<ScoreBreakdown>` then reported a `+0.10
+    venue` contribution for papers demonstrably not in a core venue.
+
+    Harmless for ordering -- a constant added to everyone reorders no one -- and
+    not harmless at all for a panel whose entire job is being true.
+
+    A 0/1 indicator is already on the scale rank-percentile exists to create,
+    so it is not normalized.
+    """
+    graph = Graph(engine).node("a", venue="Some Journal").node("b", venue=None)
+    compute_and_store_features(engine, SID, as_of_year=AS_OF)
+    assert graph.features("a")["venue"] == 0.0
+    assert graph.features("b")["venue"] == 0.0
+
+
+def test_a_pool_of_only_core_venues_scores_venue_one(engine: Engine) -> None:
+    """The mirror: uniform in the other direction must read as 1.0, not 0.5."""
+    graph = Graph(engine).node("a", venue="NeurIPS").node("b", venue="ICML")
+    compute_and_store_features(engine, SID, as_of_year=AS_OF)
+    assert graph.features("a")["venue"] == 1.0
+    assert graph.features("b")["venue"] == 1.0
+
+
+def test_venue_stays_binary_rather_than_becoming_a_rank(engine: Engine) -> None:
+    """
+    Two core venues and two others must read 1/1/0/0, not 0.75/0.75/0/0 --
+    a venue is on the list or it is not, and rank-percentile would invent an
+    ordering between papers that share the same answer.
+    """
+    graph = Graph(engine)
+    graph.node("c1", venue="ICLR").node("c2", venue="ACL")
+    graph.node("o1", venue="arXiv.org").node("o2", venue=None)
+    compute_and_store_features(engine, SID, as_of_year=AS_OF)
+    assert [graph.features(n)["venue"] for n in ("c1", "c2", "o1", "o2")] == [1.0, 1.0, 0.0, 0.0]

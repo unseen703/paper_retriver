@@ -24,4 +24,9 @@ budget:
   recency_lane_frac: 0.15
   direction_floor_frac: 0.20
   source_cap_frac: 0.40
-  score_floor: 0.0   # R3
+  # R3.e. Compared against `prescore`, NOT the R3 feature score -- candidates
+  # are not in the graph when the budget is allocated, so they have no real
+  # features yet. `prescore` is `2.0 * anchor_overlap + ...` with overlap >= 1
+  # by construction, so it bottoms out near 2.1: anything below that rejects
+  # nothing. Above it the knob reads as "how many anchors must agree".
+  score_floor: 0.0

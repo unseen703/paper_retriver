@@ -296,13 +296,35 @@ def test_a_floor_of_zero_changes_nothing() -> None:
     assert _ids(allocate(pool, _cfg(0.0), 10)) == _ids(allocate(pool, ranking_cfg.budget, 10))
 
 
-def test_a_negative_score_is_refused_by_a_zero_floor() -> None:
+def test_the_shipped_floor_of_zero_rejects_nothing_reachable() -> None:
     """
-    Negative totals are ordinary now that `hub` carries a negative weight, so
-    the default floor of 0.0 is not inert for them -- it is the line between a
-    paper that earns its place and one that does not.
+    **The correction.** An earlier version of this test asserted that a 0.0
+    floor refuses negative scores, reasoning about `score_paper`'s negative
+    `hub` weight -- which never reaches `allocate`.
+
+    `expansion.py` is the only caller and it passes `prescore`, because
+    `compute_and_store_features` runs over `graph_nodes` *after* the commit: a
+    candidate not yet in the graph has no real features to score. `prescore` is
+    `2.0 * anchor_overlap + ...` and every pool member has overlap >= 1, so the
+    realistic minimum is 2.115 -- measured, for a 191k-citation hub at overlap
+    1.
+
+    So the shipped default rejects nothing, and that is worth a test rather
+    than a comment: someone setting this value needs to know it has to clear
+    ~2.1 before it does anything at all.
     """
-    assert _ids(allocate([_entry(1, score=-0.4), _entry(2, score=0.3)], _cfg(0.0), 10)) == [2]
+    from app.config import filters as filters_cfg
+    from app.services.candidates import PoolEntry, prescore
+
+    worst_case = PoolEntry(
+        paper_id=1,
+        anchor_overlap=1,
+        citation_count=191_436,
+        age_years=9.0,
+        direction="BACKWARD",
+        source_ids=(1,),
+    )
+    assert prescore(worst_case, filters_cfg) > 2.0, "prescore floors out around 2.1, not 0"
 
 
 def test_everything_below_the_floor_yields_an_empty_expansion() -> None:

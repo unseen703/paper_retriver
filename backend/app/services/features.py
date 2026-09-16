@@ -132,7 +132,22 @@ def compute_and_store_features(
         # papers the current rules admit. Recomputing costs a string match.
         raw["venue"][paper_id] = 1.0 if is_core_venue(venue, filters.core_venues) else 0.0
 
-    normalized = {name: rank_percentile(values) for name, values in raw.items()}
+    #: Already on the 0-1 scale rank-percentile exists to create, so normalizing
+    #: it is worse than useless.
+    #:
+    #: `rank_percentile` returns NEUTRAL (0.5) when a pool has one distinct
+    #: value -- the honest answer for a continuous feature where nothing
+    #: distinguishes anyone, and the wrong one for an indicator. A session whose
+    #: candidates happen to include no core-venue paper scored every paper 0.5,
+    #: and at weight 0.20 the breakdown then reported `+0.10 venue` for papers
+    #: demonstrably not in a core venue -- on the one panel whose whole job is
+    #: being true. It also invents an ordering between papers that share the
+    #: same answer: two core venues among four papers would read 0.75, not 1.
+    binary = {"venue"}
+    normalized = {
+        name: (dict(values) if name in binary else rank_percentile(values))
+        for name, values in raw.items()
+    }
 
     active = weights if weights is not None else ranking.weights.model_dump()
     written = 0

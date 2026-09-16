@@ -69,13 +69,26 @@ def allocate(pool: list[Scored], cfg: Budget, budget: int) -> list[Scored]:
     # the floor would admit exactly the papers the floor exists to refuse, and
     # the floor would mean nothing.
     #
-    # That uniformity has a cost worth naming. Recent papers score low on
-    # `quality` -- they have had no time to accumulate citations -- so a floor
-    # set too high starves the recency lane first. That is the intended signal
-    # that it is set too high, rather than a special case to paper over.
+    # That uniformity has a cost worth naming. Recent papers score low, so a
+    # floor set too high starves the recency lane first. That is the intended
+    # signal that it is set too high, rather than a special case to paper over.
     #
-    # Not inert at 0.0 either: `hub` carries a negative weight, so negative
-    # totals are ordinary and zero is a real line.
+    # **The score here is `prescore`, not `score_paper`, and the scale is
+    # nothing like [0, 1].** `expansion.py` is the only caller and it must use
+    # `prescore`: `compute_and_store_features` runs over `graph_nodes` *after*
+    # the commit, so a candidate that is not in the graph yet has no real
+    # features to score. That ordering is not an oversight, it is why `prescore`
+    # exists.
+    #
+    # `prescore` is `2.0 * anchor_overlap + ...`, and every pool member has
+    # overlap >= 1 by construction, so it is realistically >= 2.1 -- measured at
+    # 2.115 for the worst case, a 191k-citation hub at overlap 1. **A floor of
+    # 0.0 or 1.0 therefore rejects nothing at all**; to bite it has to sit above
+    # ~2.1, where it reads as "how many anchors must agree".
+    #
+    # An earlier version of this comment reasoned about `score_paper`'s negative
+    # `hub` weight making zero a meaningful line. That is true of the R3 score
+    # and irrelevant here, because the R3 score never reaches this function.
     pool = [candidate for candidate in pool if candidate[1] >= cfg.score_floor]
     if not pool:
         return []
