@@ -57,6 +57,29 @@ def allocate(pool: list[Scored], cfg: Budget, budget: int) -> list[Scored]:
     if budget <= 0 or not pool:
         return []
 
+    # **The score floor, applied before any lane sees the pool.**
+    #
+    # `cfg.score_floor` shipped at R1, was parsed, was asserted by a test, and
+    # was read by no production code -- a lever connected to nothing, invisible
+    # only because the value is 0. CLAUDE.md rule 8 names it as the dormant twin
+    # of the `hub` sign error.
+    #
+    # Filtered here rather than inside each `take`, because the recency lane is
+    # reserved *first* so ranking cannot crowd it out: a lane that ran before
+    # the floor would admit exactly the papers the floor exists to refuse, and
+    # the floor would mean nothing.
+    #
+    # That uniformity has a cost worth naming. Recent papers score low on
+    # `quality` -- they have had no time to accumulate citations -- so a floor
+    # set too high starves the recency lane first. That is the intended signal
+    # that it is set too high, rather than a special case to paper over.
+    #
+    # Not inert at 0.0 either: `hub` carries a negative weight, so negative
+    # totals are ordinary and zero is a real line.
+    pool = [candidate for candidate in pool if candidate[1] >= cfg.score_floor]
+    if not pool:
+        return []
+
     picked: list[Scored] = []
     chosen: set[int] = set()
 

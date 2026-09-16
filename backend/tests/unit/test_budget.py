@@ -232,3 +232,79 @@ def test_any_budget_returns_exactly_that_many_from_a_large_pool(budget: int) -> 
     """Integer division in four rungs is where off-by-ones hide."""
     pool = _pool(300, age=0.5)
     assert len(allocate(pool, ranking_cfg.budget, budget)) == budget
+
+
+# --------------------------------------------------------------------------
+# R3.e -- the score floor
+# --------------------------------------------------------------------------
+#
+# `budget.score_floor` shipped in `ranking.yaml` at R1, was parsed by
+# `config.py`, asserted by a test, and read by no production code at all. A
+# lever connected to nothing -- CLAUDE.md rule 8 names it as the dormant twin
+# of the `hub` sign error, and it stayed invisible only because the value is 0.
+
+
+def _cfg(floor: float):
+    """The shipped budget config with only the floor changed."""
+    return ranking_cfg.budget.model_copy(update={"score_floor": floor})
+
+
+def test_a_candidate_below_the_floor_is_not_admitted() -> None:
+    pool = [_entry(1, score=5.0), _entry(2, score=0.2)]
+    assert _ids(allocate(pool, _cfg(1.0), 10)) == [1]
+
+
+def test_a_candidate_exactly_at_the_floor_is_admitted() -> None:
+    """
+    The floor is a minimum, not a threshold to clear. A paper scoring exactly
+    the configured value is acceptable by definition of the word.
+    """
+    assert _ids(allocate([_entry(1, score=1.0)], _cfg(1.0), 10)) == [1]
+
+
+def test_the_run_returns_short_rather_than_filling_with_what_it_refused() -> None:
+    """
+    BUILD.md: a partial expansion is a success. Topping the budget back up with
+    papers the floor just rejected would make the floor decorative.
+    """
+    pool = [_entry(1, score=5.0)] + [_entry(i, score=0.1) for i in range(2, 30)]
+    assert _ids(allocate(pool, _cfg(1.0), 20)) == [1]
+
+
+def test_the_floor_applies_to_the_recency_lane_too() -> None:
+    """
+    **The interaction worth knowing about.** The recency lane is reserved
+    before ranking so new papers cannot be crowded out -- and new papers score
+    low on `quality`, because they have had no time to accumulate citations.
+
+    Exempting the lane would let it admit exactly the papers the floor exists
+    to refuse, which makes the floor mean nothing. Applying it uniformly
+    instead means a floor set too high visibly starves the lane, and that is
+    the signal that it is set too high.
+    """
+    recent_but_poor = _entry(1, score=0.1, age=0.5)
+    old_but_good = _entry(2, score=5.0, age=9.0)
+    assert _ids(allocate([recent_but_poor, old_but_good], _cfg(1.0), 10)) == [2]
+
+
+def test_a_floor_of_zero_changes_nothing() -> None:
+    """
+    What ships today. The feature is off by default, so this asserts the
+    shipped config still admits everything it did before R3.e.
+    """
+    pool = _pool(30)
+    assert _ids(allocate(pool, _cfg(0.0), 10)) == _ids(allocate(pool, ranking_cfg.budget, 10))
+
+
+def test_a_negative_score_is_refused_by_a_zero_floor() -> None:
+    """
+    Negative totals are ordinary now that `hub` carries a negative weight, so
+    the default floor of 0.0 is not inert for them -- it is the line between a
+    paper that earns its place and one that does not.
+    """
+    assert _ids(allocate([_entry(1, score=-0.4), _entry(2, score=0.3)], _cfg(0.0), 10)) == [2]
+
+
+def test_everything_below_the_floor_yields_an_empty_expansion() -> None:
+    """Zero admitted is a real answer, not a crash."""
+    assert allocate([_entry(1, score=0.1), _entry(2, score=0.2)], _cfg(5.0), 10) == []
