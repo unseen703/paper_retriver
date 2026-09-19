@@ -540,11 +540,24 @@ Remaining, in execution order. Each is one commit; review after every third.
 
 The most valuable release. Do not skip or defer it.
 
-- [ ] `eval/build_benchmark.py` — 150–300 held-out targets (core-ML, 2019–2024, ≥15 refs). Seeds = 3 sampled references; ground truth = the rest.
-- [ ] **Temporal cutoff enforcement** — reject any candidate published after `min(seed.publication_date)`
-- [ ] **The leakage test.** Assert no ground-truth paper is visible to the system before its cutoff. *This is the most important single test in the project* — without it every headline number is fiction.
-- [ ] `eval/metrics.py` — Recall@{10,20,50}, NDCG@20, MRR, Hit@10, bootstrap 95% CIs
-- [ ] `eval/baselines.py` — all seven: random · citation-count · unranked BFS · citations/year · anchor-overlap-only · **S2's own `/recommendations`** · your ranker
+- [x] `eval/build_benchmark.py` — the builder. `make_case` is pure over `(target, references, rng)`; `eligible_targets` holds the one query. **The corpus cannot yet fill it: 6 eligible targets against the 150–300 asked for**, because only 12 of 1,596 papers are `METADATA` and the rest are stubs with no stored references. That is a crawl gap, not a harness gap — see the note below.
+- [x] **Temporal cutoff enforcement** — `eval/temporal.py`. A partial date is a range, and the two sides round in opposite directions: a *seed* takes the earliest day it could mean, a *candidate* the latest, so an ambiguous date narrows the window from both ends instead of smuggling a paper through.
+- [x] **The leakage test.** `test_no_ground_truth_paper_from_the_future_survives_the_guard`. An undated candidate is treated as invisible — it costs recall, and that is the right direction to be wrong in.
+- [x] `eval/metrics.py` — Recall@{10,20,50}, NDCG@20, MRR, Hit@10, bootstrap 95% CIs. Every expectation in its tests is worked out by hand, not observed from a run.
+- [x] `eval/baselines.py` — five of seven: random · citation-count · unranked BFS · citations/year · anchor-overlap-only. **S2's own `/recommendations`** needs the network and belongs to the runner; the seventh is the real ranker.
+
+> **Two findings the harness produced on first contact with the corpus.**
+>
+> *The benchmark is 6 cases, not 150.* Eligibility needs ≥15 *stored* reference
+> edges, and the corpus is 99% stubs. Filling it is a crawl job, not a code job.
+>
+> *`min(seed.publication_date)` can make a case nearly unwinnable.* Sampling 3
+> references from a paper spanning decades gave one target a cutoff of
+> **2009-07-19**, leaving 12 of its 56 ground-truth papers reachable. The other
+> 44 are misses however good the ranking. BUILD.md specifies `min` and that is
+> what ships, but per-case difficulty is dominated by which three references the
+> sample happened to draw, and the write-up has to report the achievable ceiling
+> alongside the score.
 - [ ] Config sweep over weight grids → `eval/results/*.json`
 - [ ] `docs/evaluation.md` — protocol, results table, ≥3 ablations, failure analysis, and the limitations section from PLAN.md §R4 (that section is graded harder than the results)
 - [ ] `make eval` reproducible: same seed + config → identical metrics
