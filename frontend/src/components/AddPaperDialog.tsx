@@ -19,6 +19,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { BulkImport } from "./BulkImport";
 import { ApiError, api, type SearchHit } from "../api/client";
 
 const DEBOUNCE_MS = 300;
@@ -210,6 +211,12 @@ export function AddPaperDialog({ sessionId, onClose }: AddPaperDialogProps) {
             </li>
           ))}
         </ul>
+
+        {/* Below the search, not beside it: one paper at a time is the common
+            case and stays the first thing in the dialog. A list is the bulk
+            case and belongs after it, behind its own heading. */}
+        <hr style={{ border: 0, borderTop: "1px solid var(--border-strong)", margin: "14px 0 0" }} />
+        <BulkImport sessionId={sessionId} />
       </div>
     </div>
   );

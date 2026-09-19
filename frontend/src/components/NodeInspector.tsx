@@ -16,12 +16,14 @@
  * completeness most of a fresh graph is stubs. Showing "0 citations" without
  * that context invites a false conclusion about the paper.
  *
- * `score_breakdown` is empty until R3, and the panel says that rather than
- * rendering an empty box -- absence with a reason reads as progress, absence
- * without one reads as breakage.
+ * `score_breakdown` is rendered by `<ScoreBreakdown>` as of R3.c, replacing a
+ * `JSON.stringify` of the same object. A paper that has one but no features
+ * behind it still says so rather than rendering an empty box -- absence with a
+ * reason reads as progress, absence without one reads as breakage.
  */
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
+import { ScoreBreakdown } from "./ScoreBreakdown";
 
 export interface Neighbour {
   id: number;
@@ -119,6 +121,17 @@ export function NodeInspector({
             />
           </dl>
 
+          {/* R3.c, and it belongs here rather than at the foot of the panel.
+              PLAN.md §F puts it directly after the graph metrics, which is
+              also where it reads best: immediately under the `score` row it
+              explains. Below the neighbour list it was off-screen for any
+              paper with more than a couple of connected papers — an
+              explanation nobody scrolls to is not an explanation.
+
+              It replaces a JSON.stringify of the same object: the difference
+              between dumping the data and explaining it. */}
+          <ScoreBreakdown breakdown={paper.score_breakdown} score={paper.score} />
+
           <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
             {paper.arxiv_id && (
               <a style={link} href={`https://arxiv.org/abs/${paper.arxiv_id}`} target="_blank" rel="noreferrer">
@@ -163,11 +176,6 @@ export function NodeInspector({
             </>
           )}
 
-          <p style={{ ...dim, marginTop: 14, fontSize: 11 }}>
-            {Object.keys(paper.score_breakdown ?? {}).length === 0
-              ? "Score breakdown arrives at R3, with the real feature set."
-              : JSON.stringify(paper.score_breakdown)}
-          </p>
         </>
       )}
     </aside>

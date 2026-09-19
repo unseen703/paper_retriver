@@ -26,8 +26,19 @@ export type NodeResponse = components["schemas"]["NodeResponse"];
 export type ExpandResponse = components["schemas"]["ExpandResponse"];
 export type JobAccepted = components["schemas"]["JobAccepted"];
 export type JobStatus = components["schemas"]["JobStatus"];
+export type JobCancelled = components["schemas"]["JobCancelled"];
 export type NodePosition = components["schemas"]["NodePosition"];
 export type StatsResponse = components["schemas"]["StatsResponse"];
+export type CandidatesResponse = components["schemas"]["CandidatesResponse"];
+export type CandidateOut = components["schemas"]["CandidateOut"];
+
+/**
+ * The columns the server will order by. Mirrors `SortKey` in
+ * `api/candidates.py`, which rejects anything else with a 422 rather than
+ * falling back to `score` -- a plausible-looking list answering a question
+ * nobody asked is the worst available failure.
+ */
+export type CandidateSort = "score" | "year" | "citations";
 export type ReviewResponse = components["schemas"]["ReviewResponse"];
 export type ClearGraphResponse = components["schemas"]["ClearGraphResponse"];
 export type SessionOut = components["schemas"]["SessionOut"];
@@ -114,6 +125,18 @@ export const api = {
     }),
 
   /**
+   * Ask a running expansion to stop (PLAN.md §G's cooperative cancel).
+   *
+   * A queued job stops outright; a running one stops at its next anchor, and
+   * whatever it already fetched stays in the graph. A 409 means the job had
+   * already finished — there was nothing left to stop.
+   */
+  cancelExpansion: (sid: number, jobId: number) =>
+    request<JobCancelled>(`/api/sessions/${sid}/expansions/${jobId}`, {
+      method: "DELETE",
+    }),
+
+  /**
    * Persist the current arrangement (R2.12).
    *
    * PUT because saving the same layout twice is the same layout, and this is
@@ -133,6 +156,21 @@ export const api = {
    * as the whole -- a failure whose symptom is that everything looks fine.
    */
   stats: (sid: number) => request<StatsResponse>(`/api/sessions/${sid}/stats`),
+
+  /**
+   * The ranked candidate table (R3.a).
+   *
+   * **Sorting is a server round-trip on purpose.** `_sort_key` on the server
+   * carries three rules with plausible wrong versions -- unknown scores last
+   * rather than first, unknown is not zero, ties break on paper_id. Sorting
+   * client-side would be a second implementation of all three, free to agree
+   * today and drift later, and the symptom would be a table that looks
+   * perfectly ordered while disagreeing with every other view of the data.
+   */
+  candidates: (sid: number, sort: CandidateSort = "score", limit = 50) =>
+    request<CandidatesResponse>(
+      `/api/sessions/${sid}/candidates?sort=${sort}&limit=${limit}`,
+    ),
 
   /** Every workspace over the shared corpus (R2.16). */
   sessions: () => request<SessionOut[]>("/api/sessions"),

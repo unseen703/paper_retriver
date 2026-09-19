@@ -19,3 +19,38 @@ jobs:
       # stops them drifting apart.
       - name: Verify
         run: uv run python scripts/verify.py
+
+  # The frontend had no CI job at all until code review went looking, and the
+  # consequences were not hypothetical: `npm run build` was failing on five
+  # TypeScript errors that nobody had seen, and a module-name collision which
+  # only manifests on a case-SENSITIVE filesystem would still not have been
+  # caught here, because nothing on Linux ever compiled this code.
+  #
+  # `typecheck` is `tsc -b --noEmit`, which is what `build` runs. A bare
+  # `tsc --noEmit` resolves a different config and passes while the build
+  # fails -- which is exactly how those five errors survived.
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # 24, matching the development machine, not BUILD.md's "Node 20+".
+          # Pinned to 20 first and the job failed on the first run with
+          # `webidl.util.markAsUncloneable is not a function` -- jsdom's bundled
+          # undici needs a newer Node than 20 provides, so the whole vitest
+          # suite failed to start. Exactly the "works on my machine" gap this
+          # job was added to close, caught by its own first execution.
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Test
+        run: npm test
+      - name: Build
+        run: npm run build

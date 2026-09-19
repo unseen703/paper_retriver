@@ -57,6 +57,42 @@ def allocate(pool: list[Scored], cfg: Budget, budget: int) -> list[Scored]:
     if budget <= 0 or not pool:
         return []
 
+    # **The score floor, applied before any lane sees the pool.**
+    #
+    # `cfg.score_floor` shipped at R1, was parsed, was asserted by a test, and
+    # was read by no production code -- a lever connected to nothing, invisible
+    # only because the value is 0. CLAUDE.md rule 8 names it as the dormant twin
+    # of the `hub` sign error.
+    #
+    # Filtered here rather than inside each `take`, because the recency lane is
+    # reserved *first* so ranking cannot crowd it out: a lane that ran before
+    # the floor would admit exactly the papers the floor exists to refuse, and
+    # the floor would mean nothing.
+    #
+    # That uniformity has a cost worth naming. Recent papers score low, so a
+    # floor set too high starves the recency lane first. That is the intended
+    # signal that it is set too high, rather than a special case to paper over.
+    #
+    # **The score here is `prescore`, not `score_paper`, and the scale is
+    # nothing like [0, 1].** `expansion.py` is the only caller and it must use
+    # `prescore`: `compute_and_store_features` runs over `graph_nodes` *after*
+    # the commit, so a candidate that is not in the graph yet has no real
+    # features to score. That ordering is not an oversight, it is why `prescore`
+    # exists.
+    #
+    # `prescore` is `2.0 * anchor_overlap + ...`, and every pool member has
+    # overlap >= 1 by construction, so it is realistically >= 2.1 -- measured at
+    # 2.115 for the worst case, a 191k-citation hub at overlap 1. **A floor of
+    # 0.0 or 1.0 therefore rejects nothing at all**; to bite it has to sit above
+    # ~2.1, where it reads as "how many anchors must agree".
+    #
+    # An earlier version of this comment reasoned about `score_paper`'s negative
+    # `hub` weight making zero a meaningful line. That is true of the R3 score
+    # and irrelevant here, because the R3 score never reaches this function.
+    pool = [candidate for candidate in pool if candidate[1] >= cfg.score_floor]
+    if not pool:
+        return []
+
     picked: list[Scored] = []
     chosen: set[int] = set()
 

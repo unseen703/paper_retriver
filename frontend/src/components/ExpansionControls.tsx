@@ -41,9 +41,44 @@ export function ExpansionControls({ sessionId, disabled }: ExpansionControlsProp
   // rather than only its beginning and its end.
   const [progress, setProgress] = useState<JobStatus | null>(null);
 
+  /**
+   * **Both summaries belong to one session.**
+   *
+   * `result` and `progress` are local state and this component is never
+   * remounted when the session changes, so an expansion run in one graph kept
+   * reporting "added 18 of 20" after the user switched to another — a sentence
+   * about a workspace they are no longer looking at, and one that reads as
+   * fact.
+   *
+   * `useView.setSession` already clears `selectedId` for exactly this reason;
+   * this is the same invariant, missed in a second place. Cleared here rather
+   * than with a `key={sessionId}` at the call site, because a key is a rule
+   * every future caller has to remember and this is the component that knows
+   * what its state is about.
+   *
+   * Adjusted during render rather than in an effect. React documents this as
+   * the way to reset state when a prop changes: an effect runs *after* the
+   * browser has already painted the stale summary, and `react-hooks` flags the
+   * synchronous `setState` inside it as a cascading render. Setting during
+   * render re-runs this component before anything is shown, and touches no
+   * other component while doing it.
+   */
+  const [renderedSession, setRenderedSession] = useState(sessionId);
+  if (renderedSession !== sessionId) {
+    setRenderedSession(sessionId);
+    setResult(null);
+    setProgress(null);
+  }
+
   const expand = useMutation({
     mutationFn: async () => {
       const status = await api.expandAndWait(sessionId, maxNew, setProgress);
+      if (status.status === "CANCELLED") {
+        // Not an error: the user asked for this. Reporting "the expansion did
+        // not finish" for a deliberate stop would make the button look broken
+        // at the exact moment it worked.
+        return status.result ?? null;
+      }
       if (status.status !== "DONE") {
         // A FAILED job is an error here even though the HTTP calls all
         // succeeded -- otherwise the button would report success for a run
@@ -115,7 +150,16 @@ export function ExpansionControls({ sessionId, disabled }: ExpansionControlsProp
           and the first poll, which would otherwise show nothing at all. */}
       {expand.isPending &&
         (progress ? (
-          <ExpansionProgress status={progress} />
+          <ExpansionProgress
+            status={progress}
+            onCancel={() => {
+              // Fire and forget: `expandAndWait` is still polling and will see
+              // the CANCELLED status on its next tick, which is what actually
+              // ends the run in this component. A 409 here means the job
+              // finished first, and the poll is about to say so anyway.
+              void api.cancelExpansion(sessionId, progress.job_id).catch(() => {});
+            }}
+          />
         ) : (
           <span style={{ fontSize: 12, color: "var(--dim)" }} role="status">
             queueing…

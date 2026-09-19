@@ -25,12 +25,16 @@ import fcose from "cytoscape-fcose";
 import cola from "cytoscape-cola";
 import type { GraphEdgeOut, GraphNodeOut } from "../api/client";
 import {
+  inTopicGroup,
   isVisibleAt,
   matchesQuery,
   navigableNodes,
   nodeRepulsion,
   positionsToSave,
+  separateOverlaps,
+  type Placed,
   type SavedPosition,
+  type TopicGroup,
 } from "./graphInteraction";
 import {
   type LabelMode,
@@ -60,6 +64,11 @@ cytoscape.use(cola);
 // Leiden at R6 -- "at R1, before communities exist, use a constant
 // idealEdgeLength -- it's fine for 100 nodes".
 const IDEAL_EDGE_LENGTH = 95;
+
+// Clear space between two node edges after the separation pass, in graph
+// units. Enough that a gap is visible at the zoom the graph is usually read
+// at, rather than two discs merely not intersecting.
+const NODE_GAP = 14;
 
 // How far a node wanders from its rest position while idling, in graph units.
 // Small on purpose: enough that the graph is visibly alive, not so much that
@@ -136,6 +145,10 @@ export interface GraphCanvasProps {
   scoreThreshold?: number;
   /** Title substring to highlight; empty clears. */
   searchQuery?: string;
+  /** Show only this topic group; the rest dim. R3 topic filter. */
+  topicGroup?: TopicGroup;
+  /** Reports how many nodes are in the chosen topic group. */
+  onTopicCount?: (matches: number) => void;
   /** Reports how many nodes survive the score filter, for the readout. */
   onVisibleCount?: (visible: number, total: number) => void;
   /** Reports how many nodes match the search. */
@@ -161,6 +174,8 @@ export function GraphCanvas({
   labelMode = "relevant",
   scoreThreshold = 0,
   searchQuery = "",
+  topicGroup = "all",
+  onTopicCount,
   onPositions,
   onVisibleCount,
   onMatchCount,
@@ -799,6 +814,29 @@ export function GraphCanvas({
     onMatchCount?.(matched.length);
   }, [nodes, searchQuery, onMatchCount]);
 
+  // --- topic filter --------------------------------------------------------
+  //
+  // Dims everything outside the chosen group rather than removing it. The
+  // graph's shape is the point: hiding the CS half would leave the chemistry
+  // papers floating with their edges cut, which says less than showing them
+  // attached to a faded background.
+  useEffect(() => {
+    const instance = cy.current;
+    if (!instance) return;
+    instance.nodes().removeClass("topicFade");
+    if (topicGroup === "all") {
+      onTopicCount?.(instance.nodes().length);
+      return;
+    }
+    const inGroup = instance
+      .nodes()
+      .filter((node) =>
+        inTopicGroup(node.data("category"), topicGroup, String(node.data("title") ?? "")),
+      );
+    instance.nodes().difference(inGroup).addClass("topicFade");
+    onTopicCount?.(inGroup.length);
+  }, [nodes, topicGroup, onTopicCount]);
+
   // --- reset zoom ----------------------------------------------------------
   useEffect(() => {
     const instance = cy.current;
@@ -967,6 +1005,11 @@ function runLayout(
       stop: () => {
         onSettled();
       },
+      // Labels are part of a node's footprint. Without this fcose packs by the
+      // circle alone and every title overlaps its neighbours, which is most of
+      // what makes a dense graph unreadable even when the discs technically
+      // clear each other.
+      nodeDimensionsIncludeLabels: true,
       idealEdgeLength: () => IDEAL_EDGE_LENGTH,
       // Seeds AND liked papers push harder, so the clusters they anchor stay
       // apart from each other and from the candidate cloud around them --
@@ -982,6 +1025,58 @@ function runLayout(
   // `stop` is unreliable on fcose's animated path -- instrumenting it showed
   // layoutstart -> layoutready and nothing after -- so the animation duration
   // is the backstop that actually releases the float.
-  window.setTimeout(onSettled, LAYOUT_ANIMATION_MS + 120);
+  window.setTimeout(() => {
+    relaxOverlaps(instance);
+    onSettled();
+  }, LAYOUT_ANIMATION_MS + 120);
   return layout;
+}
+
+/**
+ * Guarantee the one thing the force layout cannot: no two nodes overlapping.
+ *
+ * fcose's `nodeRepulsion` and `nodeSeparation` are forces. They push
+ * overlapping nodes apart and settle where everything balances, and in a dense
+ * cluster that equilibrium is still overlapping — turning them up far enough to
+ * clear every pair blows the rest of the graph apart, because the same force
+ * acts everywhere. So the layout decides the shape and this enforces the
+ * property, moving only nodes that actually collide.
+ *
+ * Run after the animation rather than in `ready`: `ready` fires with the final
+ * positions already assigned and the tween already aimed at them, so a
+ * correction made there is animated straight back out again.
+ *
+ * Radii come from the rendered node, because size scales with citations — a
+ * hub and a stub need very different clearances and one global spacing would
+ * either leave the hub buried or scatter the stubs.
+ */
+function relaxOverlaps(instance: cytoscape.Core): void {
+  const placed: Placed[] = [];
+  const pinned = new Set<number>();
+
+  instance.nodes().forEach((node) => {
+    // A hidden node occupies no screen space, so spacing around it would push
+    // visible nodes apart to clear something nobody can see.
+    if (node.style("display") === "none") return;
+    const id = Number(node.id());
+    const position = node.position();
+    placed.push({ id, x: position.x, y: position.y, r: Math.max(node.width(), node.height()) / 2 });
+    if (node.data("pinned")) pinned.add(id);
+  });
+
+  if (placed.length < 2) return;
+
+  const separated = separateOverlaps(placed, NODE_GAP, pinned);
+  instance.batch(() => {
+    instance.nodes().forEach((node) => {
+      const next = separated.get(Number(node.id()));
+      if (!next) return;
+      const current = node.position();
+      // Only touch what actually moved: assigning an identical position still
+      // invalidates Cytoscape's render caches for that node.
+      if (Math.abs(current.x - next.x) > 0.5 || Math.abs(current.y - next.y) > 0.5) {
+        node.position(next);
+      }
+    });
+  });
 }

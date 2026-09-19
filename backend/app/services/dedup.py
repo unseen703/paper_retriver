@@ -22,20 +22,17 @@ Title keys carry the surname because a shared title alone is not evidence:
 
 from __future__ import annotations
 
-import re
+from app.models import (
+    CanonicalKey,
+    Paper,
+    normalize_title,
+    strip_arxiv_version,
+    surname_of,
+)
 
-from app.models import CanonicalKey, Paper, normalize_title, surname_of
 
 # Only a trailing "v<digits>" is a version suffix. Splitting on "v" -- as the
 # BUILD.md sketch does -- would truncate any id that happens to contain one.
-_ARXIV_VERSION = re.compile(r"v\d+$")
-
-
-def strip_arxiv_version(arxiv_id: str) -> str:
-    """`1706.03762v3` -> `1706.03762`. Leaves `cs.CV/0701001` intact."""
-    return _ARXIV_VERSION.sub("", arxiv_id.strip())
-
-
 def first_author_surname(paper: Paper) -> str | None:
     """
     Surname of the byline's first author, lowercased, or None.

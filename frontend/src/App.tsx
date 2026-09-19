@@ -10,10 +10,15 @@ import { NodeInspector, type Neighbour } from "./components/NodeInspector";
 import { ViewControls } from "./components/ViewControls";
 import { StatsPanel } from "./components/StatsPanel";
 import { ReviewDrawer } from "./components/ReviewDrawer";
+import { CandidateList } from "./components/CandidateList";
 import { ClearGraphDialog } from "./components/ClearGraphDialog";
 import { SessionSwitcher } from "./components/SessionSwitcher";
 import type { LabelMode } from "./components/stylesheet";
-import { clampThreshold, type SavedPosition } from "./components/graphInteraction";
+import {
+  clampThreshold,
+  type SavedPosition,
+  type TopicGroup,
+} from "./components/graphInteraction";
 
 /**
  * The shell around the canvas: a legend, a couple of view controls, and a
@@ -38,6 +43,10 @@ export default function App() {
   const [showFixture, setShowFixture] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
+  // Open by default. PLAN.md section F: "`<CandidateList>` is the product […]
+  // Don't let the graph eat all your UI effort." A panel you have to discover
+  // is not where most decisions will get made.
+  const [listOpen, setListOpen] = useState(true);
   const [clearOpen, setClearOpen] = useState(false);
   const [hoveredId, setHoveredId] = useState<number | null>(null);
   const [relayoutToken, setRelayoutToken] = useState(0);
@@ -45,6 +54,8 @@ export default function App() {
   const [labelMode, setLabelMode] = useState<LabelMode>("relevant");
   const [scoreThreshold, setScoreThreshold] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [topicGroup, setTopicGroup] = useState<TopicGroup>("all");
+  const [topicCount, setTopicCount] = useState(0);
   const [visibleCount, setVisibleCount] = useState({ visible: 0, total: 0 });
   const [matchCount, setMatchCount] = useState(0);
 
@@ -55,6 +66,7 @@ export default function App() {
     [],
   );
   const handleMatches = useCallback((matches: number) => setMatchCount(matches), []);
+  const handleTopicCount = useCallback((matches: number) => setTopicCount(matches), []);
 
   /**
    * Persist the arrangement whenever the canvas says it settled (R2.12).
@@ -193,6 +205,15 @@ export default function App() {
           </button>
           <button
             type="button"
+            onClick={() => setListOpen((was) => !was)}
+            disabled={showFixture}
+            aria-expanded={listOpen}
+            title="The ranked candidate table — where most decisions get made"
+          >
+            Ranked
+          </button>
+          <button
+            type="button"
             onClick={() => setReviewOpen((was) => !was)}
             disabled={showFixture}
             aria-expanded={reviewOpen}
@@ -218,6 +239,9 @@ export default function App() {
           scoreRange={scoreRange}
           searchQuery={searchQuery}
           onSearchQuery={setSearchQuery}
+          topicGroup={topicGroup}
+          onTopicGroup={setTopicGroup}
+          topicCount={topicCount}
           onResetView={() => setResetViewToken((t) => t + 1)}
           visible={visibleCount.visible}
           total={visibleCount.total}
@@ -226,6 +250,32 @@ export default function App() {
       )}
 
       <main style={{ display: "flex", minHeight: 0, minWidth: 0 }}>
+        {/* Left of the canvas, because the inspector opens on the right and
+            the two are read together: pick a row here, read the detail there.
+            A fixed width rather than a flex share — a ranked table is a column
+            of known shape, and letting it grow with the window would stretch
+            the title column past the point where the eye can scan it. */}
+        {!showFixture && listOpen && (
+          <aside
+            aria-label="Ranked candidates"
+            style={{
+              width: 400,
+              flexShrink: 0,
+              display: "flex",
+              flexDirection: "column",
+              minHeight: 0,
+              borderRight: "1px solid #333",
+            }}
+          >
+            <CandidateList
+              sessionId={sessionId}
+              selectedId={selectedId}
+              onSelect={setSelected}
+              disabled={showFixture}
+            />
+          </aside>
+        )}
+
         <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
         {!showFixture && graph.isPending && <Overlay>Loading the graph…</Overlay>}
         {!showFixture && graph.isError && (
@@ -236,8 +286,13 @@ export default function App() {
         )}
         {!showFixture && !graph.isPending && !graph.isError && nodes.length === 0 && (
           <Overlay>
-            No papers yet. R1.22 adds the dialog; until then use the CLI:{" "}
-            <code>uv run python -m app.cli seed "…" --expand</code>
+            {/* This told people to use the CLI for months after the dialog
+                shipped. An empty state is the one screen where a wrong
+                instruction is guaranteed to be read, because it is all there
+                is to read. */}
+            No papers yet — use <strong>+ Add paper</strong> to search for one
+            and drop it in as a seed, then <strong>Expand</strong> to grow the
+            graph around it.
           </Overlay>
         )}
 
@@ -252,6 +307,8 @@ export default function App() {
           labelMode={labelMode}
           scoreThreshold={effectiveThreshold}
           searchQuery={searchQuery}
+          topicGroup={topicGroup}
+          onTopicCount={handleTopicCount}
           onVisibleCount={handleVisible}
           onMatchCount={handleMatches}
           onPositions={handlePositions}
@@ -314,7 +371,7 @@ export default function App() {
             {shown.score != null ? ` · score ${shown.score.toFixed(2)}` : ""}
           </span>
         ) : (
-          <span>Hover a node to read it. Click to pin it here. Full inspector at R1.22.</span>
+          <span>Hover a node to read it here. Click to open the full inspector.</span>
         )}
       </footer>
 

@@ -25,6 +25,9 @@ import {
   nodeRepulsion,
   partitionByQuery,
   positionsToSave,
+  inTopicGroup,
+  partitionByTopic,
+  separateOverlaps,
 } from "./graphInteraction";
 
 function node(id: number, over: Partial<GraphNodeOut> = {}): GraphNodeOut {
@@ -216,5 +219,280 @@ describe("nodeRepulsion", () => {
   it("falls back to the default for a missing state rather than throwing", () => {
     expect(nodeRepulsion(null)).toBe(nodeRepulsion("CANDIDATE"));
     expect(nodeRepulsion(undefined)).toBe(nodeRepulsion("CANDIDATE"));
+  });
+});
+
+describe("inTopicGroup", () => {
+  it("shows everything under 'all'", () => {
+    expect(inTopicGroup("cs.LG", "all")).toBe(true);
+    expect(inTopicGroup("physics.chem-ph", "all")).toBe(true);
+    expect(inTopicGroup(null, "all")).toBe(true);
+  });
+
+  it("puts ordinary machine learning in cs", () => {
+    expect(inTopicGroup("cs.LG", "cs", "Attention is all you need")).toBe(true);
+    expect(inTopicGroup("stat.ML", "cs", "Variational inference")).toBe(true);
+  });
+
+  it("recognises chemistry by its category", () => {
+    expect(inTopicGroup("physics.chem-ph", "chem", "Density functional theory")).toBe(true);
+    expect(inTopicGroup("cond-mat.mtrl-sci", "chem", "Perovskite stability")).toBe(true);
+  });
+
+  it("files q-bio under biochemistry rather than chemistry", () => {
+    // A deliberate move. `q-bio.*` used to land in "chemistry" because it was
+    // the only non-CS bucket there was. Now that biochemistry has its own
+    // group, quantitative biology belongs there -- and leaving it in chemistry
+    // would mean the biochemistry tab missed the one category that is always
+    // biology.
+    expect(inTopicGroup("q-bio.QM", "biochem", "Protein assay")).toBe(true);
+    expect(inTopicGroup("q-bio.QM", "chem", "Protein assay")).toBe(false);
+  });
+
+  it("recognises chemistry by vocabulary even under a CS category", () => {
+    // The correction the real graph forced. A session of 104 retrosynthesis
+    // papers held zero chemistry categories -- every one was cs.LG, which is
+    // arXiv's correct filing for machine learning about chemistry. Grouping by
+    // category alone put all 104 under "CS" and left "chemistry" empty.
+    expect(inTopicGroup("cs.LG", "chem", "Retrosynthesis with graph networks")).toBe(true);
+    expect(
+      inTopicGroup("cs.AI", "chem", "Predicting Organic Reaction Outcomes"),
+    ).toBe(true);
+  });
+
+  it("gives chemistry precedence when a paper is both", () => {
+    // The more specific fact wins, matching the backend filter where the
+    // reaction-ML rescue runs before the category rules. Filing a cs.LG
+    // retrosynthesis paper under CS would empty the tab that exists to find it.
+    const title = "Retrosynthesis prediction";
+    expect(inTopicGroup("cs.LG", "chem", title)).toBe(true);
+    expect(inTopicGroup("cs.LG", "cs", title)).toBe(false);
+  });
+
+  it("keeps ordinary ML out of chemistry", () => {
+    expect(inTopicGroup("cs.LG", "chem", "Attention is all you need")).toBe(false);
+    expect(inTopicGroup("cs.CL", "chem", "Neural machine translation")).toBe(false);
+  });
+
+  it("treats a node with neither signal as belonging to no group", () => {
+    expect(inTopicGroup(null, "cs", "Some journal paper")).toBe(false);
+    expect(inTopicGroup(null, "chem", "Some journal paper")).toBe(false);
+    expect(inTopicGroup(null, "biochem", "Some journal paper")).toBe(false);
+  });
+
+  // ----------------------------------------------------------------------
+  // Biochemistry -- the third group
+  // ----------------------------------------------------------------------
+
+  it("recognises biochemistry by vocabulary", () => {
+    // **These are the papers that prompted the group.** Every biochemistry
+    // paper in the real corpus has a NULL arXiv category -- they are journal
+    // papers, not preprints -- so a category-based rule finds none of them and
+    // they fall into no group at all, invisible under every specific filter.
+    for (const title of [
+      "Predicting Novel Metabolic Pathways through Subgraph Mining",
+      "A general model for predicting enzyme functions based on enzymatic reactions",
+      "NICEpath: Finding metabolic pathways in large networks",
+      "Binding site prediction with geometric deep learning",
+      "Molecular docking with learned scoring functions",
+    ]) {
+      expect(inTopicGroup(null, "biochem", title)).toBe(true);
+    }
+  });
+
+  it("gives biochemistry precedence over chemistry when a paper is both", () => {
+    // "enzymatic reaction" contains "reaction", so this matches both
+    // vocabularies. Biochemistry is the more specific reading, which is also
+    // the order the backend cascade checks them in.
+    const title = "Curating enzymatic reaction rules for biosynthesis";
+    expect(inTopicGroup(null, "biochem", title)).toBe(true);
+    expect(inTopicGroup(null, "chem", title)).toBe(false);
+  });
+
+  it("gives biochemistry precedence over CS", () => {
+    const title = "Enzyme function prediction with contrastive learning";
+    expect(inTopicGroup("cs.LG", "biochem", title)).toBe(true);
+    expect(inTopicGroup("cs.LG", "cs", title)).toBe(false);
+  });
+
+  it("keeps reaction chemistry out of biochemistry", () => {
+    // The corridors are separate on the backend and must read as separate
+    // here, or neither tab answers the question it exists for.
+    expect(inTopicGroup("cs.LG", "chem", "Retrosynthesis with graph networks")).toBe(true);
+    expect(inTopicGroup("cs.LG", "biochem", "Retrosynthesis with graph networks")).toBe(false);
+  });
+
+  it("keeps ordinary ML out of biochemistry", () => {
+    expect(inTopicGroup("cs.LG", "biochem", "Attention is all you need")).toBe(false);
+  });
+
+  it("catches the protein work that makes up a real biochemistry graph", () => {
+    /**
+     * **Titles taken verbatim from the "protein-reaction relation" session.**
+     *
+     * The first version of this list carried only metabolic and enzyme
+     * vocabulary and matched 1 of that session's 22 papers — the filter existed
+     * and the papers were still invisible, which is the bug it was added to
+     * fix. Real titles rather than invented ones, because invented ones are
+     * what passed the first time.
+     */
+    for (const title of [
+      "Evaluating Protein Transfer Learning with TAPE",
+      "Generative Models for Graph-Based Protein Design",
+      "Learning Protein Structure with a Differentiable Simulator",
+      "Lightweight MSA Design Advances Protein Folding From Evolutionary Embeddings",
+      "Dynamics-inspired Structure Hallucination for Protein-protein Interaction Modeling",
+      "Rethinking Text-based Protein Understanding: Retrieval or LLM?",
+      "NbBench: benchmarking language models for comprehensive nanobody tasks",
+      "Universal Biological Sequence Reranking for Improved De Novo Peptide Sequencing",
+      "Empowering Biomedical Discovery with AI Agents",
+      "Dual modality feature fused neural network integrating binding site information for drug target affinity prediction",
+    ]) {
+      expect(inTopicGroup(null, "biochem", title)).toBe(true);
+    }
+  });
+
+  it("still keeps the general-ML papers in that same session out", () => {
+    // The other half. A biochemistry session holds method papers too, and a
+    // filter that swept in Attention and BERT would group the whole graph.
+    for (const title of [
+      "Attention is All you Need",
+      "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding",
+      "Chronos-2: From Univariate to Universal Forecasting",
+      "Symbol-Equivariant Recurrent Reasoning Models",
+      "Self-Training With Noisy Student Improves ImageNet Classification",
+    ]) {
+      expect(inTopicGroup("cs.LG", "biochem", title)).toBe(false);
+    }
+  });
+
+  it("splits a graph into matched and dimmed", () => {
+    const nodes = [
+      { id: 1, primary_arxiv_category: "cs.LG", title: "Attention is all you need" },
+      { id: 2, primary_arxiv_category: "cs.LG", title: "Retrosynthesis with GNNs" },
+      { id: 3, primary_arxiv_category: null, title: "Untitled" },
+    ];
+    expect(partitionByTopic(nodes, "chem")).toEqual({ matched: [2], rest: [1, 3] });
+    expect(partitionByTopic(nodes, "cs")).toEqual({ matched: [1], rest: [2, 3] });
+  });
+
+  it("matches everything when the filter is off", () => {
+    const nodes = [{ id: 1, primary_arxiv_category: "cs.LG", title: "x" }];
+    expect(partitionByTopic(nodes, "all")).toEqual({ matched: [1], rest: [] });
+  });
+});
+
+describe("separateOverlaps", () => {
+  /**
+   * Journey:
+   *
+   *     As someone reading a citation graph, I want to be able to tell two
+   *     papers apart, so a node hiding behind another is not simply invisible.
+   *
+   * fcose's `nodeRepulsion` and `nodeSeparation` are *forces*: they push
+   * overlapping nodes apart and settle wherever the forces balance, which in a
+   * dense cluster is still overlapping. Nothing in a force layout guarantees
+   * the property "no two discs intersect" — so it is enforced afterwards,
+   * deterministically, which is also what makes it testable.
+   *
+   * Sizes vary a lot here (radius scales with log citations), so the check has
+   * to be against each pair's own radii rather than one global spacing.
+   */
+  const at = (id: number, x: number, y: number, r = 10) => ({ id, x, y, r });
+
+  function minGapBetween(placed: ReturnType<typeof separateOverlaps>, a: number, b: number) {
+    const pa = placed.get(a)!;
+    const pb = placed.get(b)!;
+    return Math.hypot(pa.x - pb.x, pa.y - pb.y);
+  }
+
+  it("pushes two overlapping nodes apart", () => {
+    const out = separateOverlaps([at(1, 0, 0), at(2, 5, 0)], 6);
+    // Two radius-10 discs need 20 between centres, plus the 6 gap.
+    expect(minGapBetween(out, 1, 2)).toBeGreaterThanOrEqual(26 - 1e-6);
+  });
+
+  it("leaves nodes that already clear each other alone", () => {
+    // Moving something that was fine would undo the layout's own decisions.
+    const input = [at(1, 0, 0), at(2, 500, 0)];
+    const out = separateOverlaps(input, 6);
+    expect(out.get(1)).toEqual({ x: 0, y: 0 });
+    expect(out.get(2)).toEqual({ x: 500, y: 0 });
+  });
+
+  it("respects each node's own radius", () => {
+    // A 40-radius hub beside a 5-radius stub needs 45 between centres, not the
+    // 20 a single global spacing would assume.
+    const out = separateOverlaps([at(1, 0, 0, 40), at(2, 10, 0, 5)], 4);
+    expect(minGapBetween(out, 1, 2)).toBeGreaterThanOrEqual(49 - 1e-6);
+  });
+
+  it("separates a dense pile, not just a pair", () => {
+    // The real case: the screenshot's centre, where a dozen nodes sit on top
+    // of one another.
+    const pile = Array.from({ length: 12 }, (_, i) => at(i, i * 0.5, 0, 10));
+    const out = separateOverlaps(pile, 6);
+    for (let a = 0; a < 12; a += 1) {
+      for (let b = a + 1; b < 12; b += 1) {
+        expect(minGapBetween(out, a, b)).toBeGreaterThanOrEqual(26 - 1e-3);
+      }
+    }
+  });
+
+  it("separates nodes that share an exact position", () => {
+    // Distance zero has no direction to push along, so it needs a deterministic
+    // nudge rather than a division by zero.
+    const out = separateOverlaps([at(1, 100, 100), at(2, 100, 100)], 6);
+    const d = minGapBetween(out, 1, 2);
+    expect(Number.isFinite(d)).toBe(true);
+    expect(d).toBeGreaterThanOrEqual(26 - 1e-3);
+  });
+
+  it("is deterministic", () => {
+    // CLAUDE.md rule 7. A layout that settles differently each run cannot be
+    // saved and restored, which is what R2.12 depends on.
+    const input = [at(1, 0, 0), at(2, 3, 1), at(3, 1, 2)];
+    expect(separateOverlaps(input, 6)).toEqual(separateOverlaps(input, 6));
+  });
+
+  it("returns every node it was given", () => {
+    const out = separateOverlaps([at(1, 0, 0), at(2, 1, 0), at(3, 900, 900)], 6);
+    expect([...out.keys()].sort()).toEqual([1, 2, 3]);
+  });
+
+  it("never moves a pinned node", () => {
+    /**
+     * A pinned node is somewhere the user put it. PLAN.md M6 is explicit that
+     * an expansion must grow the graph outward rather than rearrange a picture
+     * someone has learned, and shoving a deliberately-placed paper aside to
+     * make room is the same loss by another route.
+     *
+     * The mobile node therefore absorbs the whole push, not half of it.
+     */
+    const out = separateOverlaps([at(1, 0, 0), at(2, 5, 0)], 6, new Set([1]));
+    expect(out.get(1)).toEqual({ x: 0, y: 0 });
+    expect(minGapBetween(out, 1, 2)).toBeGreaterThanOrEqual(26 - 1e-6);
+  });
+
+  it("leaves two pinned nodes overlapping rather than moving either", () => {
+    // Both were placed on purpose. Overriding one of them to satisfy a spacing
+    // rule would be the tool arguing with the user about their own arrangement.
+    const out = separateOverlaps([at(1, 0, 0), at(2, 5, 0)], 6, new Set([1, 2]));
+    expect(out.get(1)).toEqual({ x: 0, y: 0 });
+    expect(out.get(2)).toEqual({ x: 5, y: 0 });
+  });
+
+  it("handles an empty graph and a single node", () => {
+    expect(separateOverlaps([], 6).size).toBe(0);
+    expect(separateOverlaps([at(1, 5, 5)], 6).get(1)).toEqual({ x: 5, y: 5 });
+  });
+
+  it("produces finite coordinates", () => {
+    // positionsToSave drops non-finite values, so a NaN here would silently
+    // lose the node's saved position rather than fail loudly.
+    const out = separateOverlaps([at(1, 0, 0), at(2, 0, 0), at(3, 0, 0)], 6);
+    for (const p of out.values()) {
+      expect(Number.isFinite(p.x) && Number.isFinite(p.y)).toBe(true);
+    }
   });
 });

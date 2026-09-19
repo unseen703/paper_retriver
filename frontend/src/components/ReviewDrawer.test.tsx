@@ -151,7 +151,7 @@ describe("ReviewDrawer", () => {
     const onSelect = vi.fn();
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (url: string, init?: RequestInit) =>
+      vi.fn(async (_url: string, init?: RequestInit) =>
         init?.method === "POST"
           ? ({ ok: true, status: 200, json: async () => ({ paper_id: 9 }) } as Response)
           : ({

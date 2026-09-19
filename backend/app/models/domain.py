@@ -73,6 +73,20 @@ _WS = re.compile(r"\s+")
 # genuinely different titles.
 _ARTICLES = frozenset({"a", "an", "the"})
 _NON_WORD = re.compile(r"[^\w]", re.UNICODE)
+_ARXIV_VERSION = re.compile(r"v\d+$")
+
+
+def strip_arxiv_version(arxiv_id: str) -> str:
+    """
+    `1706.03762v3` -> `1706.03762`. Leaves `cs.CV/0701001` intact.
+
+    Here rather than in `services/dedup.py`, where it started, because two
+    layers need it: dedup builds a canonical key from it, and `clients/s2.py`
+    strips the version off an id recovered from a versioned arXiv DOI. A client
+    importing from a service would be a dependency pointing the wrong way, and
+    a second copy of the regex would be a second answer to one question.
+    """
+    return _ARXIV_VERSION.sub("", arxiv_id.strip())
 
 
 def normalize_title(title: str) -> str:

@@ -28,6 +28,12 @@ means: relative importance.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import TypeVar
+
+#: Whatever a caller keys its pool by -- a paper id here, a name in the tests.
+#: Generic so the key type survives the call rather than widening to a union
+#: every caller then has to narrow again.
+K = TypeVar("K")
 
 #: What a degenerate pool scores. A pool where every value is identical -- or
 #: which holds a single paper -- has no ranking to express, and the midpoint
@@ -35,7 +41,7 @@ from collections.abc import Mapping
 NEUTRAL = 0.5
 
 
-def rank_percentile(values: Mapping[str | int, float]) -> dict[str | int, float]:
+def rank_percentile(values: Mapping[K, float]) -> dict[K, float]:
     """
     Map each value to its rank as a fraction of the range, in [0, 1].
 

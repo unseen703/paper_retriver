@@ -71,7 +71,7 @@ function Bucket({
       {/* The distribution first: one reason accounting for most of the pile is
           the finding, and it is invisible if you only ever read rows. */}
       <ul style={{ listStyle: "none", padding: 0, margin: "8px 0 12px", fontSize: 12 }}>
-        {bucket.by_reason.map((reason) => (
+        {(bucket.by_reason ?? []).map((reason) => (
           <li
             key={reason.reason_code}
             style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "2px 0" }}
@@ -83,7 +83,7 @@ function Bucket({
       </ul>
 
       <ul style={{ listStyle: "none", padding: 0, margin: 0, fontSize: 12 }}>
-        {bucket.papers.map((paper) => (
+        {(bucket.papers ?? []).map((paper) => (
           <li
             key={paper.paper_id}
             style={{
@@ -117,7 +117,7 @@ function Bucket({
 
       {bucket.truncated && (
         <p style={{ color: "var(--dim)", fontSize: 11, margin: "8px 0 0" }}>
-          Showing {bucket.papers.length} of {bucket.total}. The counts above are complete.
+          Showing {bucket.papers?.length ?? 0} of {bucket.total}. The counts above are complete.
         </p>
       )}
     </>
