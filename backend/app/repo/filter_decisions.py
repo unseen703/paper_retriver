@@ -113,10 +113,10 @@ def find_global_rejection(
     )
 
 
-def non_accepted_paper_ids(conn: Connection, session_id: int) -> set[int]:
+def non_accepted_paper_ids(conn: Connection, session_id: int, config_version: str) -> set[int]:
     """
-    Papers this session must not admit: anything whose latest verdict is not
-    ACCEPT, in either scope.
+    Papers this session must not admit: anything whose verdict **under this
+    config version** is not ACCEPT, in either scope.
 
     This is the third clause of BUILD.md's stage-4 exclusion query, alongside
     "already in the graph" and "tombstoned". Leaving it out lets a rejected
@@ -125,14 +125,29 @@ def non_accepted_paper_ids(conn: Connection, session_id: int) -> set[int]:
 
     QUARANTINE is excluded too: it means "hold for review" (R2.14), not
     "admit quietly".
+
+    **`config_version` is not optional, and omitting it was a real bug.** This
+    function used to match on any version, which contradicted the module's own
+    contract at the top of this file and silently defeated it: a paper refused
+    under an older config was dropped from the pool *before* `run_cascade`
+    could re-evaluate it, so `find_global_rejection`'s version-scoped lookup
+    was unreachable for exactly the papers it exists to re-open. Editing
+    `filters.yaml` re-stamped the version and looked like it worked, while
+    everything already refused stayed refused permanently.
+
+    A paper with no verdict at this version is therefore *not* excluded here --
+    it goes to the cascade, which decides it afresh and files a current-version
+    row. That makes the re-evaluation self-limiting rather than a permanent cost
+    (and free: every one of those papers is already in the corpus).
     """
     rows = conn.execute(
         text(
             "SELECT paper_id FROM filter_decisions"
             " WHERE outcome != 'ACCEPT'"
+            "   AND config_version = :config_version"
             "   AND (session_id IS NULL OR session_id = :session_id)"
         ),
-        {"session_id": session_id},
+        {"session_id": session_id, "config_version": config_version},
     )
     return {row[0] for row in rows}
 

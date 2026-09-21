@@ -101,7 +101,19 @@ def finish(
 ) -> None:
     conn.execute(
         text(
-            "UPDATE expansions SET status = :status, n_pool = :n_pool,"
+            # **The status is guarded; the counters are not.** Cancelling a
+            # RUNNING job is a race by construction -- the worker is mid-flight
+            # and will call this when it stops -- and writing `status`
+            # unconditionally turned a job cancelled a moment earlier back into
+            # DONE. A cancel silently undone is worse than one that fails
+            # loudly.
+            #
+            # The counters still land, because cancelling stops the work
+            # without erasing what it already cost: reporting `api_calls = 0`
+            # for a run that spent twenty would misreport the budget.
+            "UPDATE expansions SET"
+            " status = CASE WHEN status = 'CANCELLED' THEN status ELSE :status END,"
+            " n_pool = :n_pool,"
             " n_filtered = :n_filtered, n_added = :n_added, api_calls = :api_calls,"
             " cache_hits = :cache_hits, error = :error, finished_at = :finished_at"
             " WHERE id = :expansion_id AND session_id = :session_id"
@@ -119,6 +131,71 @@ def finish(
             "session_id": session_id,
         },
     )
+
+
+def cancel(conn: Connection, session_id: int, expansion_id: int) -> str | None:
+    """
+    Stop an active job. Returns the status it was in, or `None` if it was not
+    cancellable.
+
+    **Cooperative, in two different senses.** A QUEUED job is cancelled
+    outright: `claim_next` only ever picks up QUEUED rows, so a cancelled one
+    can never start. A RUNNING job is *asked* to stop -- `expand` checks
+    `is_cancelled` at its checkpoints -- and whatever it already committed
+    stays committed. Papers were fetched and rows were written; rolling those
+    back would discard work the user already paid API calls for, and pretending
+    they never happened would make the counters lie.
+
+    `None` rather than an exception for a job that is already DONE, FAILED or
+    CANCELLED: "there was nothing to stop" is an answer, and the API layer is
+    where it becomes a 409.
+    """
+    placeholders = ",".join(f":s{i}" for i in range(len(ACTIVE_STATUSES)))
+    params: dict[str, Any] = {
+        "id": expansion_id,
+        "session_id": session_id,
+        **{f"s{i}": v for i, v in enumerate(ACTIVE_STATUSES)},
+    }
+
+    previous = conn.execute(
+        text("SELECT status FROM expansions WHERE id = :id AND session_id = :session_id"),
+        {"id": expansion_id, "session_id": session_id},
+    ).scalar()
+    if previous is None or previous not in ACTIVE_STATUSES:
+        return None
+
+    # Guarded by status again rather than trusting the read above: the worker
+    # may have claimed the row in between, and the update is what decides.
+    result = conn.execute(
+        text(
+            "UPDATE expansions SET status = 'CANCELLED', finished_at = :now"
+            f" WHERE id = :id AND session_id = :session_id AND status IN ({placeholders})"
+        ),
+        {**params, "now": _utcnow()},
+    )
+    return str(previous) if result.rowcount else None
+
+
+def is_cancelled(conn: Connection, session_id: int, expansion_id: int) -> bool:
+    """
+    Has this job been asked to stop? The read `expand` does at its checkpoints.
+
+    **`session_id` first positional, like every other function here.** This
+    shipped without one, behind a docstring arguing that re-deriving the session
+    to check a flag was ceremony. BUILD.md's contract is unconditional and
+    CLAUDE.md rule 9 is explicit that a justifying comment is a workaround
+    rather than a sign-off -- and the caller had the session in hand the whole
+    time, so the exception bought nothing.
+
+    No data leaked, because `expansion_id` is a global primary key. That is
+    exactly the contract's point: "if you can call it without a session, you
+    will eventually call it with the wrong one."
+    """
+    status = conn.execute(
+        text("SELECT status FROM expansions WHERE id = :id AND session_id = :session_id"),
+        {"id": expansion_id, "session_id": session_id},
+    ).scalar()
+    return status == "CANCELLED"
 
 
 def enqueue(conn: Connection, session_id: int, params: dict[str, Any], config_version: str) -> int:
@@ -311,11 +388,13 @@ __all__ = [
     "ACTIVE_STATUSES",
     "abandon_running",
     "active",
+    "cancel",
     "claim_next",
     "enqueue",
     "fail",
     "finish",
     "get",
+    "is_cancelled",
     "latest",
     "record_progress",
     "stage_of",

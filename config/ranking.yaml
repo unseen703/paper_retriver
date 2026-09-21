@@ -6,12 +6,27 @@ weights:
   overlap:  2.00   # R1  <- dominant. Start here.
   quality:  0.40
   recency:  0.30
-  venue:    0.00   # R3
+  # R3.d. A venue on CORE_VENUES is weak evidence of quality that is
+  # independent of citation count, which matters most for recent papers that
+  # have not had time to accumulate citations. Modest on purpose: it is a
+  # proxy, and a starting point for R4 to tune against the benchmark rather
+  # than a number anyone measured.
+  venue:    0.20
   author:   0.00   # R3, cold-start only
-  dislike:  0.00   # R5, subtracted
-  hub:      0.60   # subtracted
+  # Negative, not "positive with a comment saying subtracted". `score_paper`
+  # multiplies, so the sign in this file is the sign in the score -- a positive
+  # `hub` weight rewards being a hub, which is the one recommendation you least
+  # need because you have already read it. That was the value here until R3
+  # computed the feature and made it visible.
+  dislike: -0.00   # R5
+  hub:     -0.60
 budget:
   recency_lane_frac: 0.15
   direction_floor_frac: 0.20
   source_cap_frac: 0.40
-  score_floor: 0.0   # R3
+  # R3.e. Compared against `prescore`, NOT the R3 feature score -- candidates
+  # are not in the graph when the budget is allocated, so they have no real
+  # features yet. `prescore` is `2.0 * anchor_overlap + ...` with overlap >= 1
+  # by construction, so it bottoms out near 2.1: anything below that rejects
+  # nothing. Above it the knob reads as "how many anchors must agree".
+  score_floor: 0.0

@@ -133,6 +133,7 @@ def get_graph(
                 year=paper.year,
                 citation_count=paper.citation_count,
                 paper_type=paper.paper_type.value if paper.paper_type else None,
+                primary_arxiv_category=paper.primary_arxiv_category,
                 in_degree=in_degree.get(node.paper_id, 0),
                 out_degree=out_degree.get(node.paper_id, 0),
                 pos=(

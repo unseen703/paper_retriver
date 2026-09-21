@@ -116,7 +116,124 @@ export function partitionByQuery(
  * somewhere to live outside a Cytoscape layout callback.
  */
 export function nodeRepulsion(state: GraphNodeOut["state"] | null | undefined): number {
-  return state === "SEED" || state === "LIKED" ? 20000 : 6000;
+  // Raised from 20000 after looking at a 127-node graph: the seeds were
+  // sitting inside the candidate cloud rather than anchoring separate regions
+  // of it, so the structure the graph exists to show was not visible. At 55000
+  // each seed clears a space around itself and the clusters read as clusters.
+  //
+  // The candidate figure stays where it is on purpose. Raising both would
+  // scale the whole picture up without separating anything, since a force
+  // applied everywhere changes nothing about the relative arrangement.
+  return state === "SEED" || state === "LIKED" ? 55000 : 6000;
+}
+
+/** A laid-out node, with the radius it actually occupies on screen. */
+export interface Placed {
+  id: number;
+  x: number;
+  y: number;
+  /** Half the rendered width. Sizes vary a lot: radius scales with citations. */
+  r: number;
+}
+
+/** How many relaxation passes before giving up on a pathological pile. */
+const MAX_SEPARATION_PASSES = 200;
+
+/**
+ * Push overlapping nodes apart until no two discs intersect.
+ *
+ * **A force layout cannot promise this, which is why it runs afterwards.**
+ * fcose's `nodeRepulsion` and `nodeSeparation` are forces: they push
+ * overlapping nodes apart and then settle wherever all the forces balance,
+ * and in a dense cluster that equilibrium is still overlapping. Turning the
+ * forces up far enough to clear every pair blows the rest of the graph apart,
+ * because the same force acts everywhere.
+ *
+ * So the layout decides the *shape* and this enforces the one property the
+ * shape cannot guarantee. It moves nothing that already clears its neighbours,
+ * so the arrangement fcose chose survives.
+ *
+ * **Pairwise against each node's own radius**, not one global spacing: a
+ * 40-radius hub beside a 5-radius stub needs 45 between centres, and a single
+ * number would either leave the hub overlapping or scatter the stubs.
+ *
+ * Deterministic (CLAUDE.md rule 7): nodes are processed in id order and two
+ * nodes at the same point are nudged along a fixed axis rather than a random
+ * one, so a saved layout restores to the same picture.
+ */
+export function separateOverlaps(
+  nodes: readonly Placed[],
+  gap = 8,
+  /**
+   * Nodes that must not move: dragged, or restored from a saved layout.
+   *
+   * PLAN.md M6 says an expansion must grow the graph outward rather than
+   * rearrange a picture someone has learned, and shoving a deliberately-placed
+   * paper aside to make room is the same loss by another route. A mobile
+   * neighbour absorbs the whole push instead of half of it; two pinned nodes
+   * are left overlapping, because overriding one of them would be the tool
+   * arguing with the user about their own arrangement.
+   */
+  fixed: ReadonlySet<number> = new Set(),
+  maxPasses = MAX_SEPARATION_PASSES,
+): Map<number, { x: number; y: number }> {
+  // Sorted so the result does not depend on the order the graph arrived in.
+  const working = [...nodes]
+    .sort((a, b) => a.id - b.id)
+    .map((n) => ({ id: n.id, x: n.x, y: n.y, r: n.r }));
+
+  for (let pass = 0; pass < maxPasses; pass += 1) {
+    let moved = false;
+
+    for (let i = 0; i < working.length; i += 1) {
+      for (let j = i + 1; j < working.length; j += 1) {
+        const a = working[i];
+        const b = working[j];
+        const needed = a.r + b.r + gap;
+
+        let dx = b.x - a.x;
+        let dy = b.y - a.y;
+        let distance = Math.hypot(dx, dy);
+
+        if (distance >= needed) continue;
+
+        if (distance === 0) {
+          // No direction to push along. A fixed axis keeps this reproducible;
+          // a random one would make the same graph settle differently each run
+          // and break R2.12's saved layouts.
+          dx = 1;
+          dy = 0;
+          distance = 1;
+        }
+
+        const aFixed = fixed.has(a.id);
+        const bFixed = fixed.has(b.id);
+        // Both placed on purpose: leave them, and leave them overlapping.
+        if (aFixed && bFixed) continue;
+
+        // Half the shortfall each when both may move, so neither is privileged
+        // and the pair's midpoint stays where the layout put it. When one is
+        // pinned the other takes the whole shortfall.
+        const shortfall = needed - distance;
+        const aShare = aFixed ? 0 : bFixed ? shortfall : shortfall / 2;
+        const bShare = bFixed ? 0 : aFixed ? shortfall : shortfall / 2;
+        const nx = dx / distance;
+        const ny = dy / distance;
+
+        a.x -= nx * aShare;
+        a.y -= ny * aShare;
+        b.x += nx * bShare;
+        b.y += ny * bShare;
+        moved = true;
+      }
+    }
+
+    // Converges in a handful of passes for anything but a deliberate pile;
+    // stopping early is what keeps this cheap on a large graph.
+    if (!moved) break;
+  }
+
+  return new Map(working.map((n) => [n.id, { x: n.x, y: n.y }]));
 }
 
 /** One node's saved place, in the shape `PUT /positions` accepts. */
@@ -150,4 +267,176 @@ export function positionsToSave(
     out.push({ paper_id: id, x: Math.round(x), y: Math.round(y) });
   }
   return out;
+}
+
+/**
+ * The topic groups the canvas can filter by.
+ *
+ * Three coarse buckets rather than a list of arXiv categories: the question is
+ * "show me the chemistry side of this graph", not "show me cond-mat.mtrl-sci".
+ */
+export type TopicGroup = "all" | "cs" | "chem" | "biochem";
+
+/**
+ * How a paper is recognised as reaction chemistry.
+ *
+ * **By vocabulary, not by category** — and that correction came from running
+ * the first version against a real graph. A session of 104 retrosynthesis and
+ * reaction-prediction papers contained *zero* chemistry categories: every one
+ * was cs.LG, cs.AI or stat.ML, which is their correct arXiv primary category.
+ * Machine learning for chemistry is machine learning, and arXiv files it that
+ * way.
+ *
+ * So a category-only filter put all 104 in "CS" and showed nothing under
+ * "chemistry" — technically right, useless for the question being asked. The
+ * title is what actually separates them, and it is the same signal
+ * `filters.yaml:reaction_ml_keywords` uses to admit these papers in the first
+ * place.
+ */
+const CHEM_TERMS = [
+  "retrosynth",
+  "reaction",
+  "reactivity",
+  "synthesis",
+  "molecul",
+  "chemi",
+  "catalys",
+  "compound",
+  "drug discovery",
+];
+
+/**
+ * How a paper is recognised as computational biochemistry.
+ *
+ * **Deliberately wider than `filters.yaml:biochem_ml_keywords`**, because the
+ * two answer different questions. The YAML decides what may *enter* the corpus
+ * and is narrow on purpose — protein *structure* prediction is refused there,
+ * or the graph fills with the entire AlphaFold literature. This decides how to
+ * group what is *already on screen*, including papers added by hand or force.
+ * A protein-folding paper you deliberately added should appear under biochem;
+ * hiding it because the admission rule would not have chosen it would be the
+ * filter arguing with the user about what they are looking at.
+ *
+ * **Vocabulary matters even more here than for chemistry.** The biochemistry
+ * papers in the real corpus have a *null* arXiv primary category — they are
+ * journal papers, not preprints — so a category rule finds precisely none of
+ * them and they fall into no group at all.
+ *
+ * The list below was corrected against a real graph, twice over. The first
+ * version carried only metabolic and enzyme vocabulary and matched **1 of the
+ * 22 papers** in a session that is entirely protein machine learning.
+ *
+ * **One case stays unreachable and is worth naming:** "ProtTrans: Towards
+ * Cracking the Language of Life's Code…" contains no biochemical word at all.
+ * Title matching cannot catch it. Venue would (bioRxiv), but `GraphNodeOut`
+ * carries no venue, so that is a real limit rather than a missing term.
+ */
+const BIOCHEM_TERMS = [
+  // Metabolism and enzymes
+  "metabolic",
+  "metabolite",
+  "biosynth",
+  "retrobiosynth",
+  "enzym", // enzyme, enzymes, enzymatic
+  "catalytic residue",
+  "active site",
+  "reactive site",
+  "substrate specificity",
+  // Binding and docking
+  "binding site",
+  "binding affinity",
+  "protein-ligand",
+  "drug target",
+  "docking",
+  // Proteins — the bulk of a real biochemistry graph, and absent from the
+  // first version, which is why it matched almost nothing.
+  "protein",
+  "proteom",
+  "peptide",
+  "antibody",
+  "nanobody",
+  "amino acid",
+  "gene ontology",
+  "go term",
+  // Biology at large, for papers whose subject word is the only signal
+  "biolog", // biological, biology
+  "biomedical",
+  "bioinformatic",
+  "genom",
+  "molecular dynamics",
+];
+
+/** Categories that are chemistry regardless of what the title says. */
+const CHEM_PREFIXES = ["physics.", "cond-mat."];
+/**
+ * Quantitative biology is always biochemistry, never chemistry.
+ *
+ * `q-bio.*` used to sit in CHEM_PREFIXES because chemistry was the only
+ * non-CS bucket available. Now that biochemistry has its own group, leaving it
+ * there would mean the biochemistry tab missed the one category that is
+ * unambiguously biology.
+ */
+const BIOCHEM_PREFIXES = ["q-bio."];
+const CS_PREFIXES = ["cs.", "stat.", "math."];
+
+function isBiochemistry(category: string | null | undefined, title: string): boolean {
+  if (category && BIOCHEM_PREFIXES.some((p) => category.startsWith(p))) return true;
+  const lower = title.toLowerCase();
+  return BIOCHEM_TERMS.some((term) => lower.includes(term));
+}
+
+function isChemistry(category: string | null | undefined, title: string): boolean {
+  if (category && CHEM_PREFIXES.some((p) => category.startsWith(p))) return true;
+  const lower = title.toLowerCase();
+  return CHEM_TERMS.some((term) => lower.includes(term));
+}
+
+/**
+ * Does this node belong to the chosen topic group?
+ *
+ * **Chemistry wins when a paper is both**, because it is the more specific
+ * fact — the same precedence the backend filter uses, where the reaction-ML
+ * rescue runs before the category rules. A cs.LG retrosynthesis paper belongs
+ * under "chemistry"; putting it under "CS" would empty the tab that exists to
+ * find it.
+ *
+ * A node with neither a CS category nor chemistry vocabulary is in no group,
+ * so it is hidden by any specific filter and shown by "all". Guessing would
+ * put papers in a bucket on no evidence.
+ */
+export function inTopicGroup(
+  category: string | null | undefined,
+  group: TopicGroup,
+  title = "",
+): boolean {
+  if (group === "all") return true;
+
+  // Most specific first. "enzymatic reaction" matches both vocabularies, and
+  // biochemistry is the narrower reading -- the same order the backend cascade
+  // checks the two corridors in, for the same reason.
+  const biochem = isBiochemistry(category, title);
+  if (group === "biochem") return biochem;
+  if (biochem) return false;
+
+  const chem = isChemistry(category, title);
+  if (group === "chem") return chem;
+  if (chem) return false;
+
+  return Boolean(category && CS_PREFIXES.some((prefix) => category.startsWith(prefix)));
+}
+
+/** Split loaded nodes by topic group, for dimming the rest. */
+export function partitionByTopic(
+  nodes: { id: number; primary_arxiv_category?: string | null; title?: string }[],
+  group: TopicGroup,
+): { matched: number[]; rest: number[] } {
+  const matched: number[] = [];
+  const rest: number[] = [];
+  for (const node of nodes) {
+    const target = inTopicGroup(node.primary_arxiv_category, group, node.title ?? "")
+      ? matched
+      : rest;
+    target.push(node.id);
+  }
+  return { matched, rest };
 }

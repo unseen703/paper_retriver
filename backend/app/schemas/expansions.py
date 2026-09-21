@@ -100,6 +100,21 @@ class JobProgress(BaseModel):
     cache_hits: int | None = None
 
 
+class JobCancelled(BaseModel):
+    """
+    What `DELETE /expansions/{id}` returns.
+
+    `was` names the status the job was in, because "cancelled before it started"
+    and "stopped mid-run" mean different things to whoever is looking at the
+    graph afterwards: only the second can have left new papers behind.
+    """
+
+    job_id: int
+    session_id: int
+    status: str = "CANCELLED"
+    was: str = Field(description="The status the job was in when it was cancelled.")
+
+
 class JobStatus(BaseModel):
     """
     What `GET /expansions/{id}` returns -- PLAN.md's `{status, stage, progress}`.

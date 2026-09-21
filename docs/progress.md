@@ -6,10 +6,10 @@ observably true — not when its tasks are merely written.
 | Release | Gate | Done |
 |---|---|:--:|
 | R0 | Fetch twice → zero network calls on the second; `cs.CL` for BERT, `cs.CV` for ResNet | ✅ |
-| R1 | Browser: "BERT" → Expand ×2 → ~60 post-2015 core-ML nodes in <90s | ◐ backend done (R1.1–R1.14); frontend is R1.20–R1.23 |
-| — | **Use it for a week. Keep an annoyance list.** | ☐ |
-| R2 | 20 min of curation: layout stable, no removed paper returns, every rejection reversible | ☐ |
-| R3 | One YAML weight change instantly reorders the candidate list; breakdown explains any rank | ☐ |
+| R1 | Browser: "BERT" → Expand ×2 → ~60 post-2015 core-ML nodes in <90s | ✅ |
+| — | **Use it for a week. Keep an annoyance list.** | ◐ in progress — the annoyance list is what produced the topic-filter work below |
+| R2 | 20 min of curation: layout stable, no removed paper returns, every rejection reversible | ✅ |
+| R3 | One YAML weight change instantly reorders the candidate list; breakdown explains any rank | ◐ the rescore half is true and demonstrated; `<CandidateList>` and `<ScoreBreakdown>` are not built |
 | R4 | `make eval` beats all six baselines (or documents honestly where it doesn't), with CIs | ☐ |
 | R5 | Liking 5 papers measurably raises Recall@20 — with the delta reported | ☐ |
 | R6 | Non-citation channel recovers papers the graph cannot reach — with the count reported | ☐ |
@@ -46,9 +46,48 @@ observably true — not when its tasks are merely written.
 | R1.12 — services/seed.py | M | ✅ | 16 tests; force logged, not silent |
 | **R1.13 ◆ CHECKPOINT** | M | ✅ | 21 nodes, 60 papers, 59 edges, scores 2.43→2.13 |
 | R1.14 — FastAPI app + health | S | ✅ | 17 tests; live curl, CORS allowlist verified |
-| R1.15 — GET /api/search | S | next | — |
+| R1.15–R1.19 — REST surface (search, seed, expand, graph, nodes) | L | ✅ | OpenAPI generated; frontend types via `make types`, never hand-written |
+| R1.20–R1.23 — Vite + Cytoscape/fcose shell, inspector, expand controls | L | ✅ | Browser: "BERT" → Expand ×2 → post-2015 core-ML graph |
+| R2.1–R2.5 — Sessions, rebuild-from-events, GC sweep, restore | L | ✅ | Sweep exemption is history-based (`user_held_paper_ids`), not state-based |
+| R2.6–R2.8 — Removal, tombstones, depth-at-removal | M | ✅ | Depth read back from the tombstone payload rather than re-derived |
+| R2.9–R2.12 — Expansion progress, search dimming, layout persistence | M | ✅ | Reload keeps saved positions; found only by running the app |
+| R2.13–R2.16 — StatsPanel, ReviewDrawer, ClearGraph, SessionSwitcher | L | ✅ | PR #28 (merged). Projection built from one query, so stats are consistent by construction |
+| R3 — `services/graphops.py` | M | ✅ | PageRank + reverse + undirected over non-STUB; suppressed below 60% completeness (absent, not zero) |
+| R3 — `services/similarity.py` | M | ✅ | Co-citation + bibliographic coupling over the **corpus**, not the drawn graph — the R1.9 boundary test |
+| R3 — `services/ranking.py` (**pure**) | M | ✅ | Rank-percentile, not z-score; breakdown terms sum to the score |
+| R3 — `PUT /api/config` | S | ✅ | Instant rescore from persisted features, zero API calls |
+| R3 — `services/features.py` | M | ✅ | 13 tests; normalized before storage so the pool is the session, not whatever was loaded |
+| R3 — `<CandidateList>` | M | next | — |
 
-**R0 complete.** **R1 backend complete (R1.1–R1.14).** Suite at 742; full gate green.
+**R0, R1 and R2 complete. R3 is the ranking pipeline minus its two UI surfaces.**
+Suite at **1259 backend / 95 frontend**; full gate green.
+
+### Findings worth keeping
+
+- **`hub` carried the wrong sign.** `ranking.yaml` read `hub: 0.60  # subtracted`,
+  but `score_paper` multiplies — a comment cannot subtract, so hubs were being
+  *rewarded*. Invisible until `features.py` first populated the feature. On the
+  104-node chemistry session the top results moved from *Attention Is All You
+  Need* / *BERT* / *Neural Message Passing* to *ChemDFM* / *Electron flow
+  matching for generative reaction*. `test_active_r1_weights` had asserted
+  `0.60` — the test encoded the bug rather than the intent.
+- **Corpus structure differs sharply by session.** Session 1 is a one-hop star
+  (226 of 229 papers STUB, one paper with more than a single citer), so every
+  structural signal is zero or suppressed there. Session 2 ("Chemical reaction
+  prediction", 104 papers) has real structure: **334 coupled, 48 co-cited.**
+  Test local measures against session 2.
+- **`cocite` and `bibcoup` are computed and stored but weighted 0.00.** Now that
+  session 2 gives them real signal, raising them is one `PUT /api/config`.
+- **The reaction-ML topic rescue admits 16 of the 41** chemistry/biology papers
+  already in the corpus. They will not appear until a re-expansion runs — no API
+  cost, since `config_version` changed and the cached rejections get re-opened.
+
+### Branch state at R3 (2026-09-10)
+
+PR #28 is merged (`5421405`). Three commits sit on `r2-13-16-remaining` *after*
+that merge and are **unmerged with no open PR**: `8fcb41d` (PUT /api/config),
+`35f3a20` (topic filter), `8d83dc7` (features + the sign fix). They need a fresh
+PR off `origin/main`.
 
 ## Prerequisites
 
@@ -59,7 +98,7 @@ observably true — not when its tasks are merely written.
 | P3 | Semantic Scholar API key | ✅ present in `.env` as `S2_API_KEY` |
 | P4 | Read current S2 API docs → `docs/s2-api-notes.md` | ✅ written (from `legacy/` + BUILD.md; not re-verified live — see the ⚠️ list in that file) |
 | P5 | arXiv metadata source chosen | ✅ **both** — Kaggle snapshot for bulk, OAI-PMH for the delta |
-| P6 | Empty GitHub repo, CI enabled | ◐ `git init` done locally; no remote, not pushed |
+| P6 | Empty GitHub repo, CI enabled | ✅ remote live, CI green; PRs #19–#26 and #28 merged (#27 closed unmerged — an accidental revert) |
 
 ## Deviations from BUILD.md as written
 
@@ -92,3 +131,19 @@ observably true — not when its tasks are merely written.
    `dash` install registers a pytest plugin that imports `pydantic` during
    collection and aborts the entire run when it is absent. Not in BUILD.md;
    without it `make test` cannot start outside the uv venv.
+
+## Working notes — things that have cost time twice
+
+- **Piping `verify.py` to `tail` hides its exit code.** The script returns 1
+  correctly; the pipeline reports the exit status of `tail`. Use
+  `set -o pipefail`, or a gate failure will read as a pass.
+- **`prettier` is not a project dependency.** Running it reformatted 165 and
+  then 289 lines of unrelated code and both had to be reverted.
+- **Do not stage `frontend/src` wholesale.** It has twice swept uncommitted
+  work into an unrelated commit.
+- **pysqlite opens no read transaction for a SELECT.** Two consecutive SELECTs
+  on one connection can see different snapshots — observed directly as a count
+  of 3 followed by a count of 8.
+- **Windows line endings churn `frontend/package-lock.json`.** `npm` rewrites
+  all 3537 lines; `git diff --ignore-all-space` shows the change is empty.
+  Restore it from HEAD rather than committing it.

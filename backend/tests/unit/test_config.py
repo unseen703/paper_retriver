@@ -89,11 +89,19 @@ def test_year_floor_is_2015() -> None:
 
 
 def test_core_allow_is_exactly_appendix_a() -> None:
-    assert filters.core_allow == ["cs.LG", "cs.AI", "cs.CL", "cs.NE", "stat.ML", "cs.MA"]
+    assert filters.core_allow == ["cs.LG", "cs.AI", "cs.CL", "cs.NE", "stat.ML", "cs.MA", "cs.PL"]
 
 
 def test_borderline_is_exactly_appendix_a() -> None:
-    assert filters.borderline == ["cs.IR", "cs.CY", "cs.DS", "math.OC"]
+    assert filters.borderline == [
+        "cs.IR",
+        "cs.CY",
+        "cs.DS",
+        "math.OC",
+        "cs.DC",
+        "cs.CE",
+        "cs.MS",
+    ]
 
 
 def test_applied_deny_includes_cs_cv_and_wildcards() -> None:
@@ -180,15 +188,44 @@ def test_overlap_is_the_dominant_r1_weight() -> None:
     )
 
 
-def test_r3_and_r5_weights_are_zero_at_r1() -> None:
-    for name in ("ppr", "cocite", "bibcoup", "venue", "author", "dislike"):
-        assert getattr(ranking.weights, name) == 0.0, f"{name} should be inert until R3+"
+def test_the_unimplemented_weights_stay_inert() -> None:
+    """
+    `ppr` and `dislike` arrive at R5; `author` is deferred past R4 because
+    PLAN.md C4 demotes it and it costs a per-paper S2 fetch. A weight with no
+    feature behind it would be a lever connected to nothing (CLAUDE.md rule 8).
+    """
+    for name in ("ppr", "author", "dislike"):
+        assert getattr(ranking.weights, name) == 0.0, f"{name} has no feature yet"
+
+
+def test_the_local_similarity_weights_are_computed_but_still_off() -> None:
+    """
+    `cocite` and `bibcoup` ARE computed and persisted -- the lever is connected,
+    it is simply turned down. Session 2 gives them real signal (334 coupled, 48
+    co-cited), so turning them up is one PUT away; what is missing is the
+    benchmark to say by how much, which is R4.
+    """
+    assert ranking.weights.cocite == 0.0
+    assert ranking.weights.bibcoup == 0.0
+
+
+def test_venue_carries_weight_now_that_it_is_computed(ranking_cfg: None = None) -> None:
+    """
+    R3.d. Left at 0.00 the feature would be computed, normalized and stored on
+    every node while changing no ranking at all -- the dormant half of rule 8.
+    """
+    assert ranking.weights.venue > 0
 
 
 def test_active_r1_weights() -> None:
     assert ranking.weights.quality == 0.40
     assert ranking.weights.recency == 0.30
-    assert ranking.weights.hub == 0.60
+    # Negative. This asserted 0.60 to match a file that said "subtracted" in a
+    # comment beside a positive number -- so the test encoded the bug rather
+    # than the intent, and agreed with the code all the way to a real ranking
+    # that promoted hubs. `score_paper` multiplies; the sign here is the sign
+    # in the score.
+    assert ranking.weights.hub == -0.60
 
 
 def test_budget_fractions() -> None:
@@ -212,7 +249,12 @@ def test_config_version_is_sha256_of_file_contents() -> None:
     expected = hashlib.sha256(FILTERS_YAML.read_bytes()).hexdigest()
     assert expected.startswith(filters.config_version)
     assert len(filters.config_version) == 12
-    assert filters.config_version.islower()
+    # Lowercase hex, checked against the alphabet rather than with `islower()`.
+    # `islower()` is False for a string with no cased characters, so an
+    # all-digit hash -- about a 0.5% chance for 12 hex characters -- failed
+    # this assertion despite being perfectly valid. One did, which is how the
+    # bug was found.
+    assert set(filters.config_version) <= set("0123456789abcdef")
 
 
 def test_filters_and_ranking_have_independent_versions() -> None:

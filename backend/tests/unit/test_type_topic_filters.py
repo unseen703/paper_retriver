@@ -383,3 +383,47 @@ def test_batch_normalization_the_fixture_that_must_pass() -> None:
         cfg,
     )
     assert d.outcome is Outcome.ACCEPT
+
+
+# --------------------------------------------------------------------------
+# Categories that used to fall through to CAT_NOT_ALLOWED
+# --------------------------------------------------------------------------
+#
+# A category in none of CORE_ALLOW, BORDERLINE or APPLIED_DENY quarantines as
+# CAT_NOT_ALLOWED, which is honest but uninformative: it means the config has
+# no opinion, not that the paper was judged. Two groups came out of the review
+# drawer that way and now have one.
+
+
+def test_programming_languages_is_core() -> None:
+    """
+    "Program Synthesis with Large Language Models" and AlphaCode are both
+    `cs.PL`, and both are LLM-reasoning papers filed under programming
+    languages. They arrived as CAT_NOT_ALLOWED -- refused for want of anyone
+    having classified the category, next to the ReAct and Reflexion work they
+    belong beside.
+    """
+    d = topic_filter(_paper(primary_arxiv_category="cs.PL"), cfg)
+    assert (d.outcome, d.reason_code) == (Outcome.ACCEPT, "CAT_PRIMARY_CORE")
+
+
+@pytest.mark.parametrize("category", ["cs.DC", "cs.CE", "cs.MS"])
+def test_the_systems_adjacent_categories_are_borderline(category: str) -> None:
+    """
+    Distributed computing, computational engineering and mathematical software
+    sit next to ML systems work often enough to be worth a look, and not often
+    enough to admit unread. QUARANTINE says "we are unsure" where
+    CAT_NOT_ALLOWED said "nobody decided".
+    """
+    d = topic_filter(_paper(primary_arxiv_category=category), cfg)
+    assert (d.outcome, d.reason_code) == (Outcome.QUARANTINE, "CAT_PRIMARY_BORDERLINE")
+
+
+def test_an_unclassified_category_still_quarantines() -> None:
+    """
+    The fall-through stays, and stays distinguishable. `quant-ph` was left
+    unlisted deliberately, so it must keep reading as "no opinion" rather than
+    quietly acquiring one.
+    """
+    d = topic_filter(_paper(primary_arxiv_category="quant-ph"), cfg)
+    assert (d.outcome, d.reason_code) == (Outcome.QUARANTINE, "CAT_NOT_ALLOWED")

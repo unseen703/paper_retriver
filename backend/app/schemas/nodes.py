@@ -130,7 +130,7 @@ class NodeDetail(BaseModel):
     in_degree: int = 0
     out_degree: int = 0
     features: dict[str, Any] = Field(default_factory=dict)
-    score_breakdown: dict[str, Any] = Field(
+    score_breakdown: dict[str, float] = Field(
         default_factory=dict,
         description=(
             "Per-term contributions to the score. Empty until R3 ships real"

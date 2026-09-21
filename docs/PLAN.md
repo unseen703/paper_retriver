@@ -643,6 +643,13 @@ STAGE 1 · TYPE            (cheap, deterministic, from publication_types + title
       ↳ soft only: "Benchmarking LLM reasoning" may be a real contribution
 
 STAGE 2 · TOPIC           (fallback chain — first hit wins, record which fired)
+  0. reaction-ML vocabulary hit, and not already in a core category
+       retrosynthesis · reaction/reactivity/yield prediction ·
+       synthesis planning · reaction outcome · catalyst design
+                                                     → pass  (REACTION_ML)
+       ↳ runs FIRST. The papers it rescues are denied by category at (a),
+         so a check that runs after (a) has nothing left to save.
+         See "On the reaction-ML corridor" below.
   a. arxiv_meta.primary_category present?
        ∈ CORE_ALLOW  → pass  (CAT_PRIMARY_CORE)
        ∈ APPLIED_DENY→ REJECT (CAT_PRIMARY_APPLIED)
@@ -661,12 +668,43 @@ STAGE 4 · SANITY
   title empty │ year NULL and date NULL │ retracted   → REJECT
 ```
 
+### On the reaction-ML corridor
+
+The wanted set here is an **intersection, not a category**, which is why it needs
+its own rule rather than an edit to `CORE_ALLOW` or `APPLIED_DENY`.
+
+"Every `physics.chem-ph` paper" is far too wide — most of that category is
+spectroscopy and electronic structure, nothing to do with this tool. "Only
+`cs.LG`" is too narrow, because the retrosynthesis literature publishes into
+chemistry venues. What identifies the field is its **vocabulary**: a paper about
+retrosynthesis or reaction-yield prediction is essentially always a
+machine-learning paper. The terms *are* the intersection.
+
+**Precision is the risk, not recall.** A list that is too eager admits all of
+computational chemistry through a door meant for a corridor of it, and the
+symptom — a graph slowly filling with papers nobody wanted — is slow and hard to
+attribute. `reaction_ml_keywords` therefore excludes bare "reaction" and bare
+"prediction"; half of `test_reaction_ml_rescue.py` asserts what must stay *out*.
+
+Two consequences worth stating:
+
+- **A core-category paper keeps its own reason code.** A `cs.LG` retrosynthesis
+  paper was already being admitted correctly as `CAT_PRIMARY_CORE`. Re-labelling
+  it `REACTION_ML` would rewrite history in the review drawer, which groups by
+  reason code.
+- **`applied_keywords` lost `molecul`, `protein folding` and `drug discovery`**
+  when this landed — the same vocabulary this rule admits. The two lists would
+  have pulled in opposite directions the moment STAGE 3 was actually built. The
+  clinical, financial and agricultural guards stay; those are a different
+  question from chemistry.
+
 ```yaml
 # config/filters.yaml
 year_floor: 2015           # STAGE 0. Configurable; 2015 per your decision.
 
-CORE_ALLOW:  [cs.LG, cs.AI, cs.CL, cs.NE, stat.ML, cs.MA]
-BORDERLINE:  [cs.IR, cs.CY, cs.DS, math.OC]          # → QUARANTINE, user decides
+CORE_ALLOW:  [cs.LG, cs.AI, cs.CL, cs.NE, stat.ML, cs.MA, cs.PL]
+BORDERLINE:  [cs.IR, cs.CY, cs.DS, math.OC,
+              cs.DC, cs.CE, cs.MS]                   # → QUARANTINE, user decides
 APPLIED_DENY:[cs.CV, cs.RO, cs.SE, cs.HC, cs.CR, cs.DB, cs.NI, cs.SD,
               q-bio.*, q-fin.*, eess.*, physics.*, econ.*, astro-ph.*]
 ```
@@ -900,15 +938,23 @@ Size by `log1p(citation_count)`, capped. Edge opacity by `is_influential`. Never
 | Module | Owns | Must not |
 |---|---|---|
 | `api/` | HTTP, Pydantic schemas, status codes | contain business logic |
-| `services/frontier.py` | which nodes to expand | call S2 directly |
-| `services/candidates.py` | pooling, prescore | know about HTTP |
+| `services/candidates.py` | frontier selection, pooling, prescore | know about HTTP |
 | `services/filters/` | cascade, one file per stage, pure functions | touch the DB except to log decisions |
 | `services/dedup.py` | canonicalization, node merge | |
 | `services/ranking.py` | features → normalize → score. **pure** | fetch anything |
-| `services/graphops.py` | NetworkX: PageRank, PPR, co-cite, bib-couple, GC | |
+| `services/graphops.py` | NetworkX: PageRank, reverse PageRank, degree | |
+| `services/similarity.py` | co-citation, bibliographic coupling | join to `graph_nodes` |
+| `services/features.py` | compute → normalize → persist → score | reach for runtime weights |
+| `services/gc.py` | mark-and-sweep | |
 | `clients/s2.py` | batching, rate limit, retries, cache, normalization | know about the graph |
 | `repo/` | all SQL | |
 | `jobs.py` | queue, worker | |
+
+**Three splits this table originally didn't anticipate, each for a reason worth keeping:**
+
+- **`similarity.py` is separate from `graphops.py` and must not join to `graph_nodes`.** Co-citation and bibliographic coupling run over the **corpus**, not the drawn graph — that is precisely what makes boundary papers (pre-2015, stored with edges but no `graph_nodes` row) do their job. Folding it into `graphops.py`, which builds its `DiGraph` *from* `graph_nodes`, would silently discard them and the R1.9 test would be the only thing that noticed.
+- **`gc.py` is separate** because the sweep's exemption set is a question about *event history* ("whose last event did the user write?"), not about graph structure.
+- **`features.py` takes weights as an argument rather than reading the active config.** The runtime weights live in `api/config.py` because a `PUT` may have overridden them; a service reaching up for them would invert the dependency and put `services/` on the wrong side of the layer rule.
 
 `services/ranking.py` and `services/filters/` being **pure functions over dataclasses** is what makes them exhaustively unit-testable without a database or network. Enforce it.
 

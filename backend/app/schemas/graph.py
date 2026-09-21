@@ -35,6 +35,11 @@ class GraphNodeOut(BaseModel):
     year: int | None = None
     citation_count: int | None = None
     paper_type: str | None = None
+    #: The arXiv primary category, so the canvas can filter by topic without a
+    #: request per node. Null for anything that is not an arXiv paper, which is
+    #: a real answer rather than a gap -- much of the chemistry literature is
+    #: journal-only.
+    primary_arxiv_category: str | None = None
 
     # Degrees **inside the returned graph**, not in the corpus. A hub with
     # 190k global citations can sit here with in_degree 1, and that is the

@@ -39,6 +39,7 @@ from app.schemas.expansions import (
     ExpandRequest,
     ExpandResponse,
     JobAccepted,
+    JobCancelled,
     JobProgress,
     JobStatus,
 )
@@ -109,6 +110,41 @@ def create_expansion(
     response.headers["Location"] = poll
     logger.info("expansion_queued session=%s job_id=%s", sid, job_id)
     return JobAccepted(job_id=job_id, session_id=sid, status="QUEUED", poll=poll)
+
+
+@router.delete("/{sid}/expansions/{job_id}", response_model=JobCancelled)
+def cancel_expansion(
+    sid: Annotated[int, Depends(existing_session)],
+    job_id: Annotated[int, Path(ge=1, description="The id returned by the 202.")],
+    engine: Annotated[Engine, Depends(get_engine)],
+) -> JobCancelled:
+    """
+    Ask a job to stop -- PLAN.md section G's cooperative cancel.
+
+    A QUEUED job stops outright, because `claim_next` will never pick up a
+    cancelled row. A RUNNING one is asked to stop at its next checkpoint, and
+    anything it already committed stays: those papers were fetched with real
+    API calls, and discarding them would throw away what the run already cost.
+
+    **409, not 200, for a job that has finished.** There is nothing to stop, and
+    reporting success for an action that did nothing is what makes a cancel
+    button untrustworthy the first time someone checks whether it worked.
+    """
+    with engine.begin() as conn:
+        # 404 before 409: an id this session does not own must read as absent
+        # rather than leaking that it exists and is merely finished.
+        if expansions_repo.get(conn, sid, job_id) is None:
+            raise HTTPException(status_code=404, detail=f"no expansion {job_id} in session {sid}")
+        was = expansions_repo.cancel(conn, sid, job_id)
+
+    if was is None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"expansion {job_id} is not running; there is nothing to cancel",
+        )
+
+    logger.info("expansion_cancelled session=%s job_id=%s was=%s", sid, job_id, was)
+    return JobCancelled(job_id=job_id, session_id=sid, was=was)
 
 
 @router.get("/{sid}/expansions/{job_id}", response_model=JobStatus)
