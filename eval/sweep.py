@@ -82,24 +82,40 @@ def _mean(values: Sequence[float]) -> float:
     return sum(values) / len(values) if values else 0.0
 
 
-def evaluate_config(pools: Sequence[ScoredPool], weights: Mapping[str, float]) -> dict[str, object]:
-    """Mean metric and 95% CI per metric over all cases, for one configuration."""
+def summarize_rankings(
+    rankings: Mapping[int, Sequence[int]], truths: Mapping[int, frozenset[int]]
+) -> dict[str, dict[str, object]]:
+    """
+    Mean metric and 95% CI per metric, over cases in `case_id` order.
+
+    Takes finished rankings rather than weights so the baselines -- which are
+    not weighted sums -- are scored by exactly the code that scores the ranker.
+    """
     per_case: dict[str, list[float]] = {f"recall@{k}": [] for k in RECALL_KS}
     per_case.update({"ndcg@20": [], "mrr": [], "hit@10": []})
 
-    for pool in sorted(pools, key=lambda p: p.case_id):
-        ranked = rank_pool(pool, weights)
+    for case_id in sorted(rankings):
+        ranked, truth = rankings[case_id], truths[case_id]
         for k in RECALL_KS:
-            per_case[f"recall@{k}"].append(recall_at_k(ranked, pool.ground_truth, k))
-        per_case["ndcg@20"].append(ndcg_at_k(ranked, pool.ground_truth, 20))
-        per_case["mrr"].append(reciprocal_rank(ranked, pool.ground_truth))
-        per_case["hit@10"].append(hit_at_k(ranked, pool.ground_truth, 10))
+            per_case[f"recall@{k}"].append(recall_at_k(ranked, truth, k))
+        per_case["ndcg@20"].append(ndcg_at_k(ranked, truth, 20))
+        per_case["mrr"].append(reciprocal_rank(ranked, truth))
+        per_case["hit@10"].append(hit_at_k(ranked, truth, 10))
 
-    metrics = {
+    return {
         name: {"mean": _mean(vals), "ci95": list(bootstrap_ci(vals))}
         for name, vals in sorted(per_case.items())
     }
-    return {"weights": dict(sorted(weights.items())), "metrics": metrics}
+
+
+def evaluate_config(pools: Sequence[ScoredPool], weights: Mapping[str, float]) -> dict[str, object]:
+    """Mean metric and 95% CI per metric over all cases, for one configuration."""
+    rankings = {p.case_id: rank_pool(p, weights) for p in pools}
+    truths = {p.case_id: p.ground_truth for p in pools}
+    return {
+        "weights": dict(sorted(weights.items())),
+        "metrics": summarize_rankings(rankings, truths),
+    }
 
 
 def run_sweep(
@@ -147,6 +163,7 @@ __all__ = [
     "evaluate_config",
     "rank_pool",
     "run_sweep",
+    "summarize_rankings",
     "weight_grid",
     "write_results",
 ]
