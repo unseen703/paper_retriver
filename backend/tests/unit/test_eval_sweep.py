@@ -17,6 +17,7 @@ import json
 import pytest
 from sweep import (
     ScoredPool,
+    ablation_configs,
     evaluate_config,
     rank_pool,
     run_sweep,
@@ -144,3 +145,13 @@ def test_empty_benchmark_yields_zeros_not_a_crash() -> None:
     assert out["n_cases"] == 0
     m = out["baseline"]["metrics"]  # type: ignore[index]
     assert m["recall@20"]["mean"] == 0.0
+
+
+def test_ablation_zeroes_each_nonzero_weight_in_turn_and_skips_zero_ones() -> None:
+    base = {"overlap": 2.0, "quality": 0.5, "ppr": 0.0, "hub": -0.6}
+    out = ablation_configs(base)
+    # ppr is already 0: ablating it would reproduce base and say nothing.
+    assert list(out) == ["hub", "overlap", "quality"]
+    assert out["overlap"] == {"overlap": 0.0, "quality": 0.5, "ppr": 0.0, "hub": -0.6}
+    assert out["hub"]["hub"] == 0.0
+    assert base["overlap"] == 2.0  # input untouched

@@ -34,7 +34,7 @@ from baselines import (
 from build_benchmark import BenchmarkCase, eligible_targets, make_case, references_of
 from pools import build_scored_pool
 from sqlalchemy import Connection
-from sweep import rank_pool, summarize_rankings, write_results
+from sweep import ablation_configs, rank_pool, summarize_rankings, write_results
 
 from app.config import filters, ranking
 from app.db import make_engine
@@ -85,11 +85,13 @@ def run_eval(
     cases = build_cases(conn, seed, limit)
     rankings: dict[str, dict[int, list[int]]] = {name: {} for name in METHODS}
     truths: dict[int, frozenset[int]] = {}
+    pools = []
     reachable: list[float] = []
 
     for case_id, case in enumerate(cases, start=1):
         pool, entries = build_scored_pool(conn, case_id, case, filters, as_of_year)
         truths[case_id] = pool.ground_truth
+        pools.append(pool)
         years = {
             p.id: p.year
             for p in papers_repo.get_papers_by_ids(conn, [e.paper_id for e in entries])
@@ -108,7 +110,16 @@ def run_eval(
         truth = pool.ground_truth
         reachable.append(len(truth & set(pool.features)) / len(truth) if truth else 0.0)
 
+    # Leave-one-weight-out: what each term in the score is worth. Same pools,
+    # same metrics code; only the weight under test changes.
+    base = ranking.weights.model_dump()
+    ablations = {
+        name: summarize_rankings({p.case_id: rank_pool(p, w) for p in pools}, truths)
+        for name, w in ablation_configs(base).items()
+    }
+
     return {
+        "ablations": ablations,
         "n_cases": len(cases),
         "seed": seed,
         "as_of_year": as_of_year,

@@ -72,6 +72,17 @@ def weight_grid(
     return grid
 
 
+def ablation_configs(base: Mapping[str, float]) -> dict[str, dict[str, float]]:
+    """
+    `base` with each non-zero weight set to zero in turn, keyed by weight name.
+
+    A weight already at zero is skipped: ablating it would reproduce `base`
+    and report a meaningless "no effect" for a term that was never in the
+    score. Keys come out sorted, so the report order is the same every run.
+    """
+    return {name: {**base, name: 0.0} for name in sorted(base) if base[name] != 0.0}
+
+
 def rank_pool(pool: ScoredPool, weights: Mapping[str, float]) -> list[int]:
     """Candidate ids best-first under `weights`; ties break on ascending id."""
     scored = {pid: score_paper(feats, weights)[0] for pid, feats in pool.features.items()}
@@ -160,6 +171,7 @@ def write_results(sweep: Mapping[str, object], path: Path) -> None:
 __all__ = [
     "RECALL_KS",
     "ScoredPool",
+    "ablation_configs",
     "evaluate_config",
     "rank_pool",
     "run_sweep",

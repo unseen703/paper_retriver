@@ -25,7 +25,7 @@ from pools import NO_SESSION, build_scored_pool
 from run import METHODS, NOT_RUN, build_cases, main, run_eval
 from sqlalchemy import Connection, Engine
 
-from app.config import filters
+from app.config import filters, ranking
 from app.db import make_engine
 from app.models import Paper
 from app.repo import edges as edges_repo
@@ -196,3 +196,16 @@ def test_main_writes_the_results_file(engine: Engine, tmp_path: Path) -> None:
 def test_main_fails_loudly_on_a_corpus_with_no_cases(engine: Engine, tmp_path: Path) -> None:
     assert main(["--db", str(engine.url), "--out", str(tmp_path / "out")]) == 1
     assert not (tmp_path / "out" / "eval.json").exists()
+
+
+def test_ablations_cover_every_nonzero_weight_with_full_metrics(engine: Engine) -> None:
+    _corpus(engine)
+    with engine.connect() as conn:
+        result = run_eval(conn, seed=SEED, as_of_year=AS_OF)
+    ablations = result["ablations"]
+    assert isinstance(ablations, dict)
+    expected = {k for k, v in ranking.weights.model_dump().items() if v != 0.0}
+    assert set(ablations) == expected
+    assert len(expected) >= 3  # the R4 DoD asks for at least three
+    for metrics in ablations.values():
+        assert set(metrics) == set(result["methods"]["ranker"])  # type: ignore[index]
