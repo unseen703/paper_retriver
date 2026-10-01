@@ -558,7 +558,7 @@ The most valuable release. Do not skip or defer it.
 > what ships, but per-case difficulty is dominated by which three references the
 > sample happened to draw, and the write-up has to report the achievable ceiling
 > alongside the score.
-- [ ] Config sweep over weight grids → `eval/results/*.json`
+- [x] Config sweep over weight grids → `eval/results/*.json` — `eval/sweep.py`, pure over persisted features. **The runner that feeds it real pools (`eval/run.py`, the `make eval` target) is not built**; that belongs to the reproducible-`make eval` task below.
 - [ ] `docs/evaluation.md` — protocol, results table, ≥3 ablations, failure analysis, and the limitations section from PLAN.md §R4 (that section is graded harder than the results)
 - [ ] `make eval` reproducible: same seed + config → identical metrics
 
