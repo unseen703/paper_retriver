@@ -24,6 +24,7 @@ cited, filtered or not.
 
 from __future__ import annotations
 
+import networkx as nx
 from build_benchmark import BenchmarkCase
 from sqlalchemy import Connection, text
 from sweep import ScoredPool
@@ -34,6 +35,7 @@ from app.repo import papers as papers_repo
 from app.services.candidates import PoolEntry, build_pool
 from app.services.features import FEATURE_NAMES
 from app.services.filters import is_core_venue
+from app.services.graphops import personalized_pagerank
 from app.services.ranking import citations_per_year, rank_percentile, recency
 from app.services.similarity import compute_similarity
 
@@ -59,6 +61,30 @@ def _in_degree(conn: Connection, ids: list[int]) -> dict[int, int]:
         params,
     )
     return {int(cited): int(n) for cited, n in rows}
+
+
+def _ppr(conn: Connection, ids: list[int], seeds: list[int]) -> dict[int, float]:
+    """
+    Personalized PageRank restarting on the seeds, over the edges among
+    `ids`. The same undirected projection the product uses, minus the crawl-state
+    suppression: a benchmark pool has no crawl frontier to be biased by.
+    """
+    if not ids:
+        return {}
+    marks = ",".join(f":p{i}" for i in range(len(ids)))
+    params = {f"p{i}": v for i, v in enumerate(ids)}
+    rows = conn.execute(
+        text(
+            "SELECT DISTINCT citing_id, cited_id FROM edges"
+            f" WHERE cited_id IN ({marks}) AND citing_id IN ({marks})"
+            " ORDER BY citing_id, cited_id"
+        ),
+        params,
+    ).fetchall()
+    graph: nx.Graph[int] = nx.Graph()
+    graph.add_nodes_from(sorted(ids))
+    graph.add_edges_from((int(a), int(b)) for a, b in rows)
+    return personalized_pagerank(graph, seeds)
 
 
 def build_scored_pool(
@@ -95,6 +121,8 @@ def build_scored_pool(
     similarity = compute_similarity(conn, sorted(case.seed_ids))
     hub = _in_degree(conn, sorted(set(ids) | set(case.seed_ids)))
 
+    ppr = _ppr(conn, sorted(set(ids) | set(case.seed_ids)), sorted(case.seed_ids))
+
     raw: dict[str, dict[int, float]] = {name: {} for name in FEATURE_NAMES}
     for e in kept:
         paper = papers[e.paper_id]
@@ -107,6 +135,7 @@ def build_scored_pool(
         raw["cocite"][e.paper_id] = float(similarity.co_citation.get(e.paper_id, 0))
         raw["bibcoup"][e.paper_id] = float(similarity.bib_coupling.get(e.paper_id, 0))
         raw["venue"][e.paper_id] = 1.0 if is_core_venue(paper.venue, cfg.core_venues) else 0.0
+        raw["ppr"][e.paper_id] = ppr.get(e.paper_id, 0.0)
 
     normalized = {
         name: (dict(values) if name in BINARY_FEATURES else rank_percentile(values))

@@ -266,11 +266,11 @@ def test_the_feature_names_match_the_configured_weights(engine: Engine) -> None:
     fact worth stating, and it makes adding one a deliberate edit here.
     """
     weights = set(load_ranking().weights.model_dump())
-    # `venue` left this list at R3.d. `ppr` and `dislike` arrive at R5; `author`
+    # `venue` left this list at R3.d, `ppr` at R5. `dislike` arrives at R5; `author`
     # is deferred past R4 because PLAN.md C4 demotes it and it costs a per-paper
     # S2 fetch, so paying for it before the benchmark can say whether it helps
     # is backwards.
-    not_yet = {"ppr", "author", "dislike"}
+    not_yet = {"author", "dislike"}
     assert set(FEATURE_NAMES) == weights - not_yet
 
 
@@ -416,3 +416,16 @@ def test_venue_stays_binary_rather_than_becoming_a_rank(engine: Engine) -> None:
     graph.node("o1", venue="arXiv.org").node("o2", venue=None)
     compute_and_store_features(engine, SID, as_of_year=AS_OF)
     assert [graph.features(n)["venue"] for n in ("c1", "c2", "o1", "o2")] == [1.0, 1.0, 0.0, 0.0]
+
+
+def test_ppr_is_stored_for_papers_near_the_anchors(engine: Engine) -> None:
+    graph = Graph(engine).node("seed", state="SEED").node("near").node("far").node("x")
+    graph.cites("near", "seed")
+    compute_and_store_features(engine, SID, as_of_year=AS_OF)
+    assert graph.features("near")["ppr"] > graph.features("far")["ppr"]
+
+
+def test_ppr_is_absent_not_zero_with_no_anchor(engine: Engine) -> None:
+    graph = Graph(engine).node("a").node("b")
+    compute_and_store_features(engine, SID, as_of_year=AS_OF)
+    assert "ppr" not in graph.features("a")

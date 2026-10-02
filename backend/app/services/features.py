@@ -43,10 +43,11 @@ logger = logging.getLogger(__name__)
 
 #: The features this module computes, matching weight names in `ranking.yaml`.
 #:
-#: `ppr`, `author` and `dislike` are deliberately absent -- they are weighted
-#: at 0.00 and not yet implemented, and inventing a value for them would put a
-#: number behind a lever that does nothing.
-FEATURE_NAMES = ("overlap", "quality", "recency", "hub", "cocite", "bibcoup", "venue")
+#: `author` and `dislike` are deliberately absent -- they are weighted at 0.00
+#: and not yet implemented, and inventing a value for them would put a number
+#: behind a lever that does nothing. `ppr` is computed (R5) but its weight stays
+#: 0.00 until the benchmark says it beats co-citation.
+FEATURE_NAMES = ("overlap", "quality", "recency", "hub", "cocite", "bibcoup", "venue", "ppr")
 
 #: States whose papers anchor "related to what?". The same set the sweep marks
 #: from and the expander builds its frontier from.
@@ -108,8 +109,8 @@ def compute_and_store_features(
         return 0
 
     with engine.connect() as conn:
-        signals = compute_signals(conn, session_id)
         anchors = [pid for pid, state, _, _, _, _ in rows if state in ANCHOR_STATES]
+        signals = compute_signals(conn, session_id, anchors)
         similarity = compute_similarity(conn, anchors)
 
     # Raw values first, one dict per feature across the whole session -- the
@@ -147,13 +148,24 @@ def compute_and_store_features(
     normalized = {
         name: (dict(values) if name in binary else rank_percentile(values))
         for name, values in raw.items()
+        if name != "ppr"
     }
+    # Suppressed or anchorless PPR is absent from the feature dict, not zero
+    # (graphops docstring); `score_paper` skips a missing feature.
+    if signals.personalized_pagerank:
+        normalized["ppr"] = rank_percentile(
+            {pid: signals.personalized_pagerank.get(pid, 0.0) for pid, *_ in rows}
+        )
 
     active = weights if weights is not None else ranking.weights.model_dump()
     written = 0
     with engine.begin() as conn:
         for paper_id, _, _, _, _, _ in rows:
-            features = {name: float(normalized[name][paper_id]) for name in FEATURE_NAMES}
+            features = {
+                name: float(normalized[name][paper_id])
+                for name in FEATURE_NAMES
+                if name in normalized
+            }
             total, breakdown = score_paper(features, active)
             conn.execute(
                 text(

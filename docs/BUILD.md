@@ -564,7 +564,7 @@ The most valuable release. Do not skip or defer it.
 
 ### R5 — Personalization · 4–5 days
 
-- [ ] Personalized PageRank on `SEED ∪ LIKED` (`nx.pagerank(personalization=...)`, fixed tolerance for determinism)
+- [x] Personalized PageRank on `SEED ∪ LIKED` (`nx.pagerank(personalization=...)`, fixed tolerance for determinism) -- `graphops.personalized_pagerank`, stored as the `ppr` feature; **weight stays 0.00 until the benchmark shows it beats co-citation**
 - [ ] Dislike proximity as a subtracted penalty term
 - [ ] Rocchio-style weight nudging after N labels
 - [ ] Live rescore + candidate reorder on every label
