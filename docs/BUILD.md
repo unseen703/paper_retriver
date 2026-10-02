@@ -559,7 +559,7 @@ The most valuable release. Do not skip or defer it.
 > sample happened to draw, and the write-up has to report the achievable ceiling
 > alongside the score.
 - [x] Config sweep over weight grids → `eval/results/*.json` — `eval/sweep.py`, pure over persisted features. **The runner that feeds it real pools (`eval/run.py`, the `make eval` target) is not built**; that belongs to the reproducible-`make eval` task below.
-- [ ] `docs/evaluation.md` — protocol, results table, ≥3 ablations, failure analysis, and the limitations section from PLAN.md §R4 (that section is graded harder than the results)
+- [~] `docs/evaluation.md` — **protocol and limitations written; results tables empty until the corpus has ≥150 eligible targets.** Protocol, results table, ≥3 ablations, failure analysis, and the limitations section from PLAN.md §R4 (that section is graded harder than the results)
 - [x] `make eval` reproducible: same seed + config → identical metrics — `eval/run.py` + `eval/pools.py`; writes `eval/results/eval.json` (ranker + 5 offline baselines + the pool recall ceiling; S2 `/recommendations` is listed under `not_run`). `citation_count` and the citing side of co-citation are today's values, not as-of-cutoff, so they leak slightly; `docs/evaluation.md` must say so.
 
 ### R5 — Personalization · 4–5 days
