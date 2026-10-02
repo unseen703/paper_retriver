@@ -27,11 +27,13 @@ session, so the cost tracks the node's degree and not the graph's size.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from sqlalchemy import Engine
 
+from app.api.config import active_weights
 from app.api.deps import existing_session, get_engine
 from app.repo import edges as edges_repo
 from app.repo import graph as graph_repo
@@ -144,7 +146,14 @@ def label_node(
     names a rule the UI can explain.
     """
     try:
-        result = apply_label(engine, sid, paper_id, body.state)
+        result = apply_label(
+            engine,
+            sid,
+            paper_id,
+            body.state,
+            weights=active_weights(),
+            as_of_year=datetime.now(UTC).year,
+        )
     except NodeNotInSession as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except TransitionError as exc:
