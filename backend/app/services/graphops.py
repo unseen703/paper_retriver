@@ -38,6 +38,7 @@ and an invalidation bug would cost far more than the rebuild ever will.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 import networkx as nx
@@ -48,6 +49,12 @@ COMPLETENESS_FLOOR = 0.6
 
 #: NetworkX's default, and the value the analytic tests are worked out against.
 DAMPING = 0.85
+
+#: Fixed, not defaulted, so a NetworkX release changing its default cannot move
+#: a ranking (CLAUDE.md rule 7). Tight enough that two runs agree to the digits
+#: the score keeps.
+PPR_TOLERANCE = 1e-10
+PPR_MAX_ITER = 200
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +73,14 @@ class GraphSignals:
     #: PageRank over the undirected projection. Diverging from `pagerank` is a
     #: crawl-bias signal rather than an error (PLAN.md mitigation 4).
     undirected_pagerank: dict[int, float] = field(default_factory=dict)
+    #: Personalized PageRank restarting on the anchors (R5). Empty when
+    #: suppressed *or* when no anchor survives into the crawled subgraph --
+    #: absent, not zero, for the same reason as `pagerank`.
+    personalized_pagerank: dict[int, float] = field(default_factory=dict)
+    #: Proximity to DISLIKED nodes (R5): the same walk restarted on the negative
+    #: set. Empty when suppressed, when nothing is disliked, or when no
+    #: disliked node is in the crawled subgraph -- absent, not zero.
+    dislike_proximity: dict[int, float] = field(default_factory=dict)
     crawl_completeness: float = 0.0
     pagerank_suppressed: bool = False
 
@@ -129,7 +144,39 @@ def _pagerank(graph: nx.DiGraph[int] | nx.Graph[int]) -> dict[int, float]:
     return dict(nx.pagerank(graph, alpha=DAMPING))
 
 
-def compute_signals(conn: Connection, session_id: int) -> GraphSignals:
+def personalized_pagerank(
+    graph: nx.DiGraph[int] | nx.Graph[int], restart: Iterable[int]
+) -> dict[int, float]:
+    """
+    Random walk with restart: mass concentrates near `restart`.
+
+    Restart nodes missing from the graph are dropped; with none left the result
+    is empty rather than a uniform fallback, because uniform mass would be
+    plain PageRank presented as personalization. The restart vector is built in
+    sorted order with fixed tolerance and iteration cap (CLAUDE.md rule 7).
+    """
+    present = sorted({n for n in restart if n in graph})
+    if not present:
+        return {}
+    weight = 1.0 / len(present)
+    personalization = {n: (weight if n in set(present) else 0.0) for n in sorted(graph)}
+    return dict(
+        nx.pagerank(
+            graph,
+            alpha=DAMPING,
+            personalization=personalization,
+            tol=PPR_TOLERANCE,
+            max_iter=PPR_MAX_ITER,
+        )
+    )
+
+
+def compute_signals(
+    conn: Connection,
+    session_id: int,
+    anchors: Iterable[int] = (),
+    negatives: Iterable[int] = (),
+) -> GraphSignals:
     """
     Every structural signal for this session, with the crawl-bias rules applied.
 
@@ -186,6 +233,11 @@ def compute_signals(conn: Connection, session_id: int) -> GraphSignals:
         # PLAN.md mitigation 4: the diagnostic is the divergence between this
         # and the directed answer, which cannot be seen without both.
         undirected_pagerank=_pagerank(subgraph.to_undirected(as_view=True)),
+        # Undirected: a candidate is related to an anchor whether it cites the
+        # anchor or is cited by it, and the directed walk only flows one way
+        # and strands everything that merely cites the seeds.
+        personalized_pagerank=personalized_pagerank(subgraph.to_undirected(as_view=True), anchors),
+        dislike_proximity=personalized_pagerank(subgraph.to_undirected(as_view=True), negatives),
         crawl_completeness=completeness,
         pagerank_suppressed=False,
     )
@@ -197,4 +249,5 @@ __all__ = [
     "GraphSignals",
     "build_digraph",
     "compute_signals",
+    "personalized_pagerank",
 ]

@@ -558,17 +558,18 @@ The most valuable release. Do not skip or defer it.
 > what ships, but per-case difficulty is dominated by which three references the
 > sample happened to draw, and the write-up has to report the achievable ceiling
 > alongside the score.
-- [ ] Config sweep over weight grids → `eval/results/*.json`
-- [ ] `docs/evaluation.md` — protocol, results table, ≥3 ablations, failure analysis, and the limitations section from PLAN.md §R4 (that section is graded harder than the results)
-- [ ] `make eval` reproducible: same seed + config → identical metrics
+- [x] Config sweep over weight grids → `eval/results/*.json` — `eval/sweep.py`, pure over persisted features. **The runner that feeds it real pools (`eval/run.py`, the `make eval` target) is not built**; that belongs to the reproducible-`make eval` task below.
+- [~] `docs/evaluation.md` — **protocol and limitations written; results tables empty until the corpus has ≥150 eligible targets.** Protocol, results table, ≥3 ablations, failure analysis, and the limitations section from PLAN.md §R4 (that section is graded harder than the results)
+- [x] `make eval` reproducible: same seed + config → identical metrics — `eval/run.py` + `eval/pools.py`; writes `eval/results/eval.json` (ranker + 5 offline baselines + the pool recall ceiling; S2 `/recommendations` is listed under `not_run`). `citation_count` and the citing side of co-citation are today's values, not as-of-cutoff, so they leak slightly; `docs/evaluation.md` must say so.
 
 ### R5 — Personalization · 4–5 days
 
-- [ ] Personalized PageRank on `SEED ∪ LIKED` (`nx.pagerank(personalization=...)`, fixed tolerance for determinism)
-- [ ] Dislike proximity as a subtracted penalty term
-- [ ] Rocchio-style weight nudging after N labels
-- [ ] Live rescore + candidate reorder on every label
-- [ ] **Simulated-user eval:** reveal ground-truth papers as "likes" one at a time; assert Recall@20 rises
+- [x] Personalized PageRank on `SEED ∪ LIKED` (`nx.pagerank(personalization=...)`, fixed tolerance for determinism)
+ -- `graphops.personalized_pagerank`, stored as the `ppr` feature; **weight stays 0.00 until the benchmark shows it beats co-citation**
+- [x] Dislike proximity as a subtracted penalty term -- `dislike` feature (PPR restarted on DISLIKED, rank-normalized, absent when nothing is disliked or all values tie); session-only, so `eval/pools.py` cannot populate it and the benchmark cannot yet measure it. **Weight stays `-0.00` until the simulated-user eval can.**
+- [x] Rocchio-style weight nudging after N labels -- `services/rocchio.py`, pure; zero weights stay zero, signs never flip, nothing persisted. **Not yet wired to labels (R5.4) or measured (simulated-user eval).**
+- [x] Live rescore + candidate reorder on every label -- `PATCH .../nodes/{id}` recomputes the session's features (`ppr`/`dislike` depend on labels) and applies the Rocchio-nudged weights to scores only, never persisted; `rescored_count` is now real. **Frontend reorder rides the existing `/candidates` refetch; not yet measured by the simulated-user eval.**
+- [x] **Simulated-user eval:** reveal ground-truth papers as "likes" one at a time; assert Recall@20 rises -- `eval/simulate.py`, written to `eval/results/eval.json` under `simulated_user`. Revealed papers leave both ranking and truth. Simulates the Rocchio nudge only (`ppr`/`dislike` need a session; no dislikes are invented). **A measurement, not an assertion on real data** -- the rise is proven on a hand-built pool; whether it rises on the corpus is for `docs/evaluation.md`.
 - [ ] **If PPR doesn't beat co-citation on the benchmark, keep the simpler model and write that up.** A documented negative result is a strong signal.
 
 ### R6 — Embeddings and clustering · 5–7 days

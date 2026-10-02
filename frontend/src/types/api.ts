@@ -838,7 +838,7 @@ export interface components {
             swept?: number[];
             /**
              * Rescored Count
-             * @description Nodes whose score changed as a result. Always 0 until R3 ships ranking -- reported now so the contract does not change shape when it starts being non-zero.
+             * @description Nodes in this session re-scored as a result of the label change. 0 for a no-op relabel, which changes nothing.
              * @default 0
              */
             rescored_count: number;
