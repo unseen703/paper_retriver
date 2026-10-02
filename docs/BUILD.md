@@ -569,7 +569,7 @@ The most valuable release. Do not skip or defer it.
 - [x] Dislike proximity as a subtracted penalty term -- `dislike` feature (PPR restarted on DISLIKED, rank-normalized, absent when nothing is disliked or all values tie); session-only, so `eval/pools.py` cannot populate it and the benchmark cannot yet measure it. **Weight stays `-0.00` until the simulated-user eval can.**
 - [x] Rocchio-style weight nudging after N labels -- `services/rocchio.py`, pure; zero weights stay zero, signs never flip, nothing persisted. **Not yet wired to labels (R5.4) or measured (simulated-user eval).**
 - [x] Live rescore + candidate reorder on every label -- `PATCH .../nodes/{id}` recomputes the session's features (`ppr`/`dislike` depend on labels) and applies the Rocchio-nudged weights to scores only, never persisted; `rescored_count` is now real. **Frontend reorder rides the existing `/candidates` refetch; not yet measured by the simulated-user eval.**
-- [ ] **Simulated-user eval:** reveal ground-truth papers as "likes" one at a time; assert Recall@20 rises
+- [x] **Simulated-user eval:** reveal ground-truth papers as "likes" one at a time; assert Recall@20 rises -- `eval/simulate.py`, written to `eval/results/eval.json` under `simulated_user`. Revealed papers leave both ranking and truth. Simulates the Rocchio nudge only (`ppr`/`dislike` need a session; no dislikes are invented). **A measurement, not an assertion on real data** -- the rise is proven on a hand-built pool; whether it rises on the corpus is for `docs/evaluation.md`.
 - [ ] **If PPR doesn't beat co-citation on the benchmark, keep the simpler model and write that up.** A documented negative result is a strong signal.
 
 ### R6 — Embeddings and clustering · 5–7 days

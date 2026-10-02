@@ -33,6 +33,7 @@ from baselines import (
 )
 from build_benchmark import BenchmarkCase, eligible_targets, make_case, references_of
 from pools import build_scored_pool
+from simulate import simulate_user
 from sqlalchemy import Connection
 from sweep import ablation_configs, rank_pool, summarize_rankings, write_results
 
@@ -118,8 +119,11 @@ def run_eval(
         for name, w in ablation_configs(base).items()
     }
 
+    simulated = simulate_user(pools, base, seed)
+
     return {
         "ablations": ablations,
+        "simulated_user": simulated,
         "n_cases": len(cases),
         "seed": seed,
         "as_of_year": as_of_year,
