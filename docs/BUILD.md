@@ -564,8 +564,9 @@ The most valuable release. Do not skip or defer it.
 
 ### R5 — Personalization · 4–5 days
 
-- [x] Personalized PageRank on `SEED ∪ LIKED` (`nx.pagerank(personalization=...)`, fixed tolerance for determinism) -- `graphops.personalized_pagerank`, stored as the `ppr` feature; **weight stays 0.00 until the benchmark shows it beats co-citation**
-- [ ] Dislike proximity as a subtracted penalty term
+- [x] Personalized PageRank on `SEED ∪ LIKED` (`nx.pagerank(personalization=...)`, fixed tolerance for determinism)
+ -- `graphops.personalized_pagerank`, stored as the `ppr` feature; **weight stays 0.00 until the benchmark shows it beats co-citation**
+- [x] Dislike proximity as a subtracted penalty term -- `dislike` feature (PPR restarted on DISLIKED, rank-normalized, absent when nothing is disliked or all values tie); session-only, so `eval/pools.py` cannot populate it and the benchmark cannot yet measure it. **Weight stays `-0.00` until the simulated-user eval can.**
 - [ ] Rocchio-style weight nudging after N labels
 - [ ] Live rescore + candidate reorder on every label
 - [ ] **Simulated-user eval:** reveal ground-truth papers as "likes" one at a time; assert Recall@20 rises

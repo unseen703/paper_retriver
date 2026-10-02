@@ -43,11 +43,17 @@ logger = logging.getLogger(__name__)
 
 #: The features this module computes, matching weight names in `ranking.yaml`.
 #:
-#: `author` and `dislike` are deliberately absent -- they are weighted at 0.00
-#: and not yet implemented, and inventing a value for them would put a number
-#: behind a lever that does nothing. `ppr` is computed (R5) but its weight stays
+#: `author` is deliberately absent -- it is weighted at 0.00 and not
+#: implemented, and inventing a value for it would put a number behind a lever
+#: that does nothing. `ppr` is computed (R5) but its weight stays
 #: 0.00 until the benchmark says it beats co-citation.
 FEATURE_NAMES = ("overlap", "quality", "recency", "hub", "cocite", "bibcoup", "venue", "ppr")
+
+#: Features that exist only where a user has labelled something. A benchmark
+#: pool has no dislikes, so `eval/pools.py` cannot populate these and they stay
+#: out of `FEATURE_NAMES`; `test_features.py` asserts the union covers every
+#: weight but `author`.
+SESSION_ONLY_FEATURES = ("dislike",)
 
 #: States whose papers anchor "related to what?". The same set the sweep marks
 #: from and the expander builds its frontier from.
@@ -110,7 +116,8 @@ def compute_and_store_features(
 
     with engine.connect() as conn:
         anchors = [pid for pid, state, _, _, _, _ in rows if state in ANCHOR_STATES]
-        signals = compute_signals(conn, session_id, anchors)
+        negatives = [pid for pid, state, _, _, _, _ in rows if state == "DISLIKED"]
+        signals = compute_signals(conn, session_id, anchors, negatives)
         similarity = compute_similarity(conn, anchors)
 
     # Raw values first, one dict per feature across the whole session -- the
@@ -157,13 +164,22 @@ def compute_and_store_features(
             {pid: signals.personalized_pagerank.get(pid, 0.0) for pid, *_ in rows}
         )
 
+    # Proximity to what the user rejected, rank-normalized. Omitted when the
+    # values do not differ: a uniform 0.5 would charge every candidate the same
+    # phantom penalty on the breakdown panel. The weight's sign (<= 0) makes it
+    # a penalty.
+    if signals.dislike_proximity:
+        proximity = {pid: signals.dislike_proximity.get(pid, 0.0) for pid, *_ in rows}
+        if len(set(proximity.values())) > 1:
+            normalized["dislike"] = rank_percentile(proximity)
+
     active = weights if weights is not None else ranking.weights.model_dump()
     written = 0
     with engine.begin() as conn:
         for paper_id, _, _, _, _, _ in rows:
             features = {
                 name: float(normalized[name][paper_id])
-                for name in FEATURE_NAMES
+                for name in (*FEATURE_NAMES, *SESSION_ONLY_FEATURES)
                 if name in normalized
             }
             total, breakdown = score_paper(features, active)
@@ -193,4 +209,9 @@ def compute_and_store_features(
     return written
 
 
-__all__ = ["ANCHOR_STATES", "FEATURE_NAMES", "compute_and_store_features"]
+__all__ = [
+    "ANCHOR_STATES",
+    "FEATURE_NAMES",
+    "SESSION_ONLY_FEATURES",
+    "compute_and_store_features",
+]

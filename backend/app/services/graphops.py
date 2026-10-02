@@ -77,6 +77,10 @@ class GraphSignals:
     #: suppressed *or* when no anchor survives into the crawled subgraph --
     #: absent, not zero, for the same reason as `pagerank`.
     personalized_pagerank: dict[int, float] = field(default_factory=dict)
+    #: Proximity to DISLIKED nodes (R5): the same walk restarted on the negative
+    #: set. Empty when suppressed, when nothing is disliked, or when no
+    #: disliked node is in the crawled subgraph -- absent, not zero.
+    dislike_proximity: dict[int, float] = field(default_factory=dict)
     crawl_completeness: float = 0.0
     pagerank_suppressed: bool = False
 
@@ -167,7 +171,12 @@ def personalized_pagerank(
     )
 
 
-def compute_signals(conn: Connection, session_id: int, anchors: Iterable[int] = ()) -> GraphSignals:
+def compute_signals(
+    conn: Connection,
+    session_id: int,
+    anchors: Iterable[int] = (),
+    negatives: Iterable[int] = (),
+) -> GraphSignals:
     """
     Every structural signal for this session, with the crawl-bias rules applied.
 
@@ -228,6 +237,7 @@ def compute_signals(conn: Connection, session_id: int, anchors: Iterable[int] = 
         # anchor or is cited by it, and the directed walk only flows one way
         # and strands everything that merely cites the seeds.
         personalized_pagerank=personalized_pagerank(subgraph.to_undirected(as_view=True), anchors),
+        dislike_proximity=personalized_pagerank(subgraph.to_undirected(as_view=True), negatives),
         crawl_completeness=completeness,
         pagerank_suppressed=False,
     )

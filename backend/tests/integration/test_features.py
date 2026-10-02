@@ -39,7 +39,11 @@ from sqlalchemy import Engine, text
 
 from app.config import load_ranking
 from app.db import make_engine
-from app.services.features import FEATURE_NAMES, compute_and_store_features
+from app.services.features import (
+    FEATURE_NAMES,
+    SESSION_ONLY_FEATURES,
+    compute_and_store_features,
+)
 
 ROOT = Path(__file__).resolve().parents[3]
 ALEMBIC_INI = ROOT / "backend" / "migrations" / "alembic.ini"
@@ -266,12 +270,12 @@ def test_the_feature_names_match_the_configured_weights(engine: Engine) -> None:
     fact worth stating, and it makes adding one a deliberate edit here.
     """
     weights = set(load_ranking().weights.model_dump())
-    # `venue` left this list at R3.d, `ppr` at R5. `dislike` arrives at R5; `author`
-    # is deferred past R4 because PLAN.md C4 demotes it and it costs a per-paper
-    # S2 fetch, so paying for it before the benchmark can say whether it helps
-    # is backwards.
-    not_yet = {"author", "dislike"}
-    assert set(FEATURE_NAMES) == weights - not_yet
+    # `venue` left this list at R3.d, `ppr` and `dislike` at R5. `author` is
+    # deferred past R4 because PLAN.md C4 demotes it and it costs a per-paper S2
+    # fetch, so paying for it before the benchmark can say whether it helps is
+    # backwards. `dislike` needs a user's labels, so it is session-only.
+    not_yet = {"author"}
+    assert set(FEATURE_NAMES) | set(SESSION_ONLY_FEATURES) == weights - not_yet
 
 
 def test_running_twice_is_stable(engine: Engine) -> None:
@@ -429,3 +433,31 @@ def test_ppr_is_absent_not_zero_with_no_anchor(engine: Engine) -> None:
     graph = Graph(engine).node("a").node("b")
     compute_and_store_features(engine, SID, as_of_year=AS_OF)
     assert "ppr" not in graph.features("a")
+
+
+def _dislike_graph(engine: Engine) -> Graph:
+    graph = Graph(engine).node("seed", state="SEED").node("bad", state="DISLIKED")
+    graph.node("near_bad").node("near_seed").node("far")
+    graph.cites("near_bad", "bad").cites("near_seed", "seed")
+    return graph
+
+
+def test_dislike_proximity_is_higher_near_a_disliked_paper(engine: Engine) -> None:
+    graph = _dislike_graph(engine)
+    compute_and_store_features(engine, SID, as_of_year=AS_OF)
+    assert graph.features("near_bad")["dislike"] > graph.features("near_seed")["dislike"]
+    assert graph.features("near_bad")["dislike"] > graph.features("far")["dislike"]
+
+
+def test_a_negative_dislike_weight_lowers_the_score_near_a_dislike(engine: Engine) -> None:
+    graph = _dislike_graph(engine)
+    weights = {"overlap": 0.0, "dislike": -1.0}
+    compute_and_store_features(engine, SID, as_of_year=AS_OF, weights=weights)
+    assert graph.score("near_bad") < graph.score("near_seed")
+
+
+def test_dislike_is_absent_not_zero_with_nothing_disliked(engine: Engine) -> None:
+    graph = Graph(engine).node("seed", state="SEED").node("a").node("b")
+    graph.cites("a", "seed")
+    compute_and_store_features(engine, SID, as_of_year=AS_OF)
+    assert "dislike" not in graph.features("a")
