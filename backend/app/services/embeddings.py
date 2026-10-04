@@ -19,11 +19,14 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from collections.abc import Iterable, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 from numpy.typing import NDArray
+
+from app.models.domain import Paper
 
 DIM_SPECTER_V2 = 768
 
@@ -132,3 +135,57 @@ class EmbeddingStore:
             # float32 bits and make save -> load -> save non-idempotent.
             store._rows[int(pid)] = (np.asarray(row, dtype=np.float32), str(h))
         return store
+
+
+@dataclass(frozen=True, slots=True)
+class BackfillResult:
+    """What a backfill did. `unavailable` is S2 having no vector -- not an error."""
+
+    requested: int
+    stored: int
+    unavailable: int
+    skipped_fresh: int
+
+
+EmbeddingFetcher = Callable[[list[str]], Awaitable[dict[str, list[float]]]]
+
+
+async def backfill(
+    store: EmbeddingStore,
+    papers: Iterable[Paper],
+    fetch: EmbeddingFetcher,
+) -> BackfillResult:
+    """
+    Fill `store` for `papers` that lack a current vector, via `fetch`
+    (``S2Client.get_embeddings``). Mutates the store; the caller saves it.
+
+    Stubs and papers with no database id are skipped: a stub has no abstract, so
+    its text hash would say "fresh" for a vector of a title alone. Ids are
+    requested in sorted order so the cache key is the same on every run.
+    """
+    wanted: dict[str, tuple[int, str]] = {}
+    skipped_fresh = 0
+    for paper in papers:
+        if paper.id is None or paper.is_stub:
+            continue
+        digest = text_hash(paper.title, paper.abstract)
+        if not store.needs_embedding(paper.id, digest):
+            skipped_fresh += 1
+            continue
+        wanted[paper.s2_paper_id] = (paper.id, digest)
+    s2_ids = sorted(wanted)
+    vectors = await fetch(s2_ids) if s2_ids else {}
+    stored = 0
+    for s2_id in s2_ids:
+        vec = vectors.get(s2_id)
+        if vec is None:
+            continue
+        paper_id, digest = wanted[s2_id]
+        if store.put(paper_id, vec, digest):
+            stored += 1
+    return BackfillResult(
+        requested=len(s2_ids),
+        stored=stored,
+        unavailable=len(s2_ids) - stored,
+        skipped_fresh=skipped_fresh,
+    )

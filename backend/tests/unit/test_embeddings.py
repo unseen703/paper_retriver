@@ -9,7 +9,8 @@ import httpx
 import pytest
 
 from app.clients.s2 import EMBEDDING_FIELDS
-from app.services.embeddings import EmbeddingStore, text_hash
+from app.models.domain import CrawlState, Paper
+from app.services.embeddings import EmbeddingStore, backfill, text_hash
 from tests.unit.test_s2_client import cache, make_client  # noqa: F401
 
 DIM = 4
@@ -112,3 +113,44 @@ async def test_get_embeddings_tolerates_missing_fields(cache) -> None:  # type: 
     assert await client.get_embeddings(["a", "b", "c", "x", "d"]) == {"a": [0.1, 0.2]}
     assert rec.count == 1
     assert await client.get_embeddings([]) == {}
+
+
+def _paper(pid: int, s2: str, abstract: str | None = "abs", stub: bool = False) -> Paper:
+    return Paper(
+        s2_paper_id=s2,
+        title=f"t{pid}",
+        first_seen_at="2026-01-01",
+        id=pid,
+        abstract=abstract,
+        crawl_state=CrawlState.STUB if stub else CrawlState.METADATA,
+    )
+
+
+@pytest.mark.asyncio
+async def test_backfill_fetches_only_what_is_missing_or_stale() -> None:
+    s = _store()
+    fresh = _paper(1, "a")
+    s.put(1, [1, 0, 0, 0], text_hash(fresh.title, fresh.abstract))
+    changed = _paper(2, "b", abstract="new")
+    s.put(2, [0, 1, 0, 0], text_hash(changed.title, "old"))
+    calls: list[list[str]] = []
+
+    async def fetch(ids: list[str]) -> dict[str, list[float]]:
+        calls.append(ids)
+        return {"b": [0, 0, 1, 0], "d": [0, 0, 0, 1]}  # "c" has no vector
+
+    papers = [_paper(4, "d"), fresh, changed, _paper(3, "c"), _paper(9, "z", None, stub=True)]
+    res = await backfill(s, papers, fetch)
+    assert calls == [["b", "c", "d"]]  # sorted, stub and fresh excluded
+    assert (res.requested, res.stored, res.unavailable, res.skipped_fresh) == (3, 2, 1, 1)
+    assert 3 not in s and 9 not in s
+    assert s.top_k([0, 0, 1, 0], 1)[0][0] == 2  # the stale row was replaced
+
+
+@pytest.mark.asyncio
+async def test_backfill_with_nothing_to_do_makes_no_call() -> None:
+    async def fetch(ids: list[str]) -> dict[str, list[float]]:
+        raise AssertionError("must not be called")
+
+    res = await backfill(_store(), [_paper(1, "a", stub=True)], fetch)
+    assert (res.requested, res.stored) == (0, 0)
