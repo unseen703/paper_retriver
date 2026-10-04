@@ -10,7 +10,13 @@ import pytest
 
 from app.clients.s2 import EMBEDDING_FIELDS
 from app.models.domain import CrawlState, Paper
-from app.services.embeddings import EmbeddingStore, backfill, text_hash
+from app.services.embeddings import (
+    EmbeddingStore,
+    backfill,
+    centroid,
+    embedding_candidates,
+    text_hash,
+)
 from tests.unit.test_s2_client import cache, make_client  # noqa: F401
 
 DIM = 4
@@ -154,3 +160,41 @@ async def test_backfill_with_nothing_to_do_makes_no_call() -> None:
 
     res = await backfill(_store(), [_paper(1, "a", stub=True)], fetch)
     assert (res.requested, res.stored) == (0, 0)
+
+
+def test_centroid_ignores_anchors_without_a_vector() -> None:
+    s = _store()
+    s.put(1, [1, 0, 0, 0], "a")
+    s.put(2, [0, 1, 0, 0], "b")
+    c = centroid(s, [2, 1, 99])  # 99 has no vector
+    assert c is not None
+    assert [round(float(x), 6) for x in c] == [0.5, 0.5, 0.0, 0.0]
+    assert centroid(s, [99]) is None
+    assert centroid(s, []) is None
+
+
+def test_embedding_candidates_by_hand() -> None:
+    s = _store()
+    s.put(1, [1, 0, 0, 0], "a")  # anchor
+    s.put(2, [0, 1, 0, 0], "b")  # anchor
+    s.put(3, [1, 1, 0, 0], "c")  # cos 1.0 with centroid (1,1)
+    s.put(4, [1, 0, 0, 0], "d")  # cos 1/sqrt(2)
+    s.put(5, [0, 0, 1, 0], "e")  # orthogonal
+    got = embedding_candidates(s, [2, 1], 10)
+    assert [pid for pid, _ in got] == [3, 4, 5]  # anchors never come back
+    assert [round(sc, 6) for _, sc in got][:2] == [1.0, round(1 / math.sqrt(2), 6)]
+    assert [pid for pid, _ in embedding_candidates(s, [1, 2], 1, exclude=[3])] == [4]
+
+
+def test_embedding_channel_is_silent_without_anchor_vectors() -> None:
+    s = _store()
+    s.put(3, [1, 0, 0, 0], "c")
+    assert embedding_candidates(s, [1, 2], 5) == []
+    assert embedding_candidates(s, [], 5) == []
+
+
+def test_embedding_candidates_independent_of_anchor_order() -> None:
+    s = _store()
+    for pid, v in enumerate([[1, 0, 0, 0], [0, 1, 0, 0], [1, 1, 0, 0], [1, 0, 1, 0]], start=1):
+        s.put(pid, v, "h")
+    assert embedding_candidates(s, [1, 2], 5) == embedding_candidates(s, [2, 1, 1], 5)

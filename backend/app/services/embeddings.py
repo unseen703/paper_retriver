@@ -72,6 +72,14 @@ class EmbeddingStore:
     def discard(self, paper_id: int) -> None:
         self._rows.pop(paper_id, None)
 
+    def get(self, paper_id: int) -> NDArray[np.float32] | None:
+        """The stored unit vector, or None. Callers must not mutate it."""
+        row = self._rows.get(paper_id)
+        if row is None:
+            return None
+        vec: NDArray[np.float32] = row[0]
+        return vec
+
     def top_k(
         self,
         query: Sequence[float],
@@ -135,6 +143,42 @@ class EmbeddingStore:
             # float32 bits and make save -> load -> save non-idempotent.
             store._rows[int(pid)] = (np.asarray(row, dtype=np.float32), str(h))
         return store
+
+
+def centroid(store: EmbeddingStore, paper_ids: Iterable[int]) -> NDArray[np.float32] | None:
+    """
+    Mean of the stored vectors for `paper_ids` (those without one are ignored),
+    or None when none has a vector. Ids are summed in sorted order so the float
+    result is identical on every run.
+    """
+    vecs = [v for pid in sorted(set(paper_ids)) if (v := store.get(pid)) is not None]
+    if not vecs:
+        return None
+    mean: NDArray[np.float32] = np.mean(np.stack(vecs), axis=0).astype(np.float32)
+    return mean
+
+
+def embedding_candidates(
+    store: EmbeddingStore,
+    anchor_ids: Iterable[int],
+    k: int,
+    *,
+    exclude: Iterable[int] = (),
+) -> list[tuple[int, float]]:
+    """
+    The embedding channel (R6): the `k` papers nearest the anchors' centroid,
+    ordered ``(-cosine, paper_id)``. Anchors are always excluded from their own
+    results. Nothing here looks at citation edges -- that independence is the
+    channel's whole point: it can return papers the graph cannot reach.
+
+    Anchors with no vector are ignored; if none has one the channel is silent
+    (empty list), never an error.
+    """
+    anchors = sorted(set(anchor_ids))
+    query = centroid(store, anchors)
+    if query is None:
+        return []
+    return store.top_k(query.tolist(), k, exclude=[*anchors, *exclude])
 
 
 @dataclass(frozen=True, slots=True)
