@@ -139,6 +139,24 @@ async def test_seeding_bert_and_expanding_adds_nodes(
     assert len(node_ids) == result.n_added + 1
 
 
+async def test_an_expansion_assigns_every_drawn_node_a_community(
+    env: tuple[Engine, CachedOnlyS2Client],
+) -> None:
+    """R6.8: the detector runs after the commit, so no drawn node is left unclustered."""
+    engine, client = env
+    await _seed_bert(engine, client)
+    result = await expand(
+        engine, client, SESSION, ExpandParams(max_new=20), filters_cfg, ranking_cfg, AS_OF
+    )
+    assert result.n_added > 0
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("SELECT community_id FROM graph_nodes WHERE session_id = :s"), {"s": SESSION}
+        ).fetchall()
+    assert len(rows) == result.n_added + 1
+    assert all(r[0] is not None for r in rows)
+
+
 async def test_no_rejected_paper_reaches_the_graph(
     env: tuple[Engine, CachedOnlyS2Client],
 ) -> None:

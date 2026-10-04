@@ -31,6 +31,7 @@ from app.repo import papers as papers_repo
 from app.services.budget import allocate
 from app.services.candidates import build_pool, prescore
 from app.services.categories import CategoryResolver
+from app.services.communities import refresh_communities
 from app.services.features import compute_and_store_features
 from app.services.ingest import IngestStats, ingest_neighbour
 
@@ -262,6 +263,15 @@ async def expand(
         compute_and_store_features(engine, session_id, as_of_year)
     except Exception:  # noqa: BLE001 - a scoring failure must not cost the fetch
         logger.exception("feature_pass_failed session=%s", session_id)
+
+    # (13) Communities (R6.6), same contract as (12): derived from the whole
+    # graph, so recomputed whole, and never fatal -- a stale or missing id only
+    # costs the cluster hints, not the papers.
+    try:
+        with engine.begin() as conn:
+            refresh_communities(conn, session_id)
+    except Exception:  # noqa: BLE001 - clustering must not cost the fetch
+        logger.exception("community_pass_failed session=%s", session_id)
 
     return _finish(engine, session_id, result, None)
 

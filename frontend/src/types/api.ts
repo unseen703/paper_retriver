@@ -642,6 +642,8 @@ export interface components {
              * @default 0
              */
             out_degree: number;
+            /** Community Id */
+            community_id?: number | null;
             pos?: components["schemas"]["Position"] | null;
         };
         /**
