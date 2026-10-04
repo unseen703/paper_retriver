@@ -335,3 +335,27 @@ __all__ = [
     "set_position",
     "set_positions",
 ]
+
+
+def set_communities(conn: Connection, session_id: int, assignments: dict[int, int]) -> int:
+    """
+    Persist community ids (R6). Returns the number of rows written.
+
+    Separate from `add_node` for the same reason `set_positions` is: a community
+    is derived from the whole graph, not from whichever expansion touched a
+    node, so only the detector writes it. UPDATE only -- a paper with no node
+    in this session is a no-op rather than an invented row.
+    """
+    if not assignments:
+        return 0
+    result = conn.execute(
+        text(
+            "UPDATE graph_nodes SET community_id = :community_id"
+            " WHERE session_id = :session_id AND paper_id = :paper_id"
+        ),
+        [
+            {"session_id": session_id, "paper_id": paper_id, "community_id": community_id}
+            for paper_id, community_id in sorted(assignments.items())
+        ],
+    )
+    return len(assignments) if result.rowcount is None or result.rowcount < 0 else result.rowcount
