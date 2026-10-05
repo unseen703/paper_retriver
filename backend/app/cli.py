@@ -21,9 +21,10 @@ import json
 from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 
 import typer
-from sqlalchemy import text
+from sqlalchemy import Engine, text
 
 from app.clients.cache import ResponseCache
 from app.clients.s2 import S2Client
@@ -32,6 +33,7 @@ from app.db import make_engine
 from app.logging_setup import bind_session, configure_logging
 from app.repo import papers as papers_repo
 from app.services.categories import CategoryResolver
+from app.services.embeddings import BackfillResult, EmbeddingFetcher, EmbeddingStore, backfill
 from app.services.expansion import ExpandParams, expand
 from app.services.filters.cascade import CascadeStats, run_cascade
 from app.services.seed import AlreadyPresent, SeedRejected, add_seed
@@ -330,6 +332,53 @@ def show(session: int = 1) -> None:
     typer.echo(f"edges          {edges}")
     typer.echo(f"decisions      {decisions}")
     engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# embed-backfill -- R6.11
+# ---------------------------------------------------------------------------
+
+
+def embedding_stem() -> Path:
+    """`data/embeddings` beside the database: the `.npy` matrix and `.json` id index."""
+    return Path(settings.db_path).parent / "embeddings"
+
+
+async def run_embed_backfill(engine: Engine, fetch: EmbeddingFetcher, stem: Path) -> BackfillResult:
+    """
+    Embed every stored paper that lacks a current vector, then save the store.
+
+    Split from the command so tests drive it with a stub `fetch` and a temp
+    path. The store is saved even when nothing was stored: an empty file pair is
+    how "no vectors yet" is told apart from "never ran".
+    """
+    store = EmbeddingStore.load(stem)
+    with engine.connect() as conn:
+        papers = papers_repo.get_papers_by_ids(conn, papers_repo.list_ids(conn))
+    result = await backfill(store, papers, fetch)
+    store.save(stem)
+    return result
+
+
+async def _embed_backfill() -> None:
+    client, _ = _make_client()
+    engine = make_engine()
+    try:
+        result = await run_embed_backfill(engine, client.get_embeddings, embedding_stem())
+    finally:
+        await client.aclose()
+        engine.dispose()
+    typer.echo(
+        f"requested={result.requested} stored={result.stored}"
+        f" unavailable={result.unavailable} skipped_fresh={result.skipped_fresh}"
+    )
+    typer.echo(f"api_calls={client.api_calls}, cache_hits={client.cache_hits}")
+
+
+@app.command("embed-backfill")
+def embed_backfill() -> None:
+    """Fetch SPECTER2 vectors from S2 for papers that lack one (no inference here)."""
+    asyncio.run(_embed_backfill())
 
 
 if __name__ == "__main__":
