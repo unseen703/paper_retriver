@@ -22,6 +22,7 @@
 import { useEffect, useRef } from "react";
 import cytoscape from "cytoscape";
 import fcose from "cytoscape-fcose";
+import { communityHulls } from "./communityHulls";
 import cola from "cytoscape-cola";
 import type { GraphEdgeOut, GraphNodeOut } from "../api/client";
 import {
@@ -465,6 +466,51 @@ export function GraphCanvas({
 
     cy.current = instance;
 
+    // Community hulls: a canvas under Cytoscape's own layers, redrawn on every
+    // render so it follows pan, zoom and node drags. Display only -- it takes
+    // no pointer events and holds no graph state.
+    const hullCanvas = document.createElement("canvas");
+    hullCanvas.setAttribute("aria-hidden", "true");
+    hullCanvas.style.cssText =
+      "position:absolute;inset:0;width:100%;height:100%;pointer-events:none;";
+    container.current.insertBefore(hullCanvas, container.current.firstChild);
+    const drawHulls = () => {
+      const ctx = hullCanvas.getContext("2d");
+      if (!ctx) return;
+      const ratio = window.devicePixelRatio || 1;
+      const w = instance.width();
+      const h = instance.height();
+      if (hullCanvas.width !== w * ratio || hullCanvas.height !== h * ratio) {
+        hullCanvas.width = w * ratio;
+        hullCanvas.height = h * ratio;
+      }
+      ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      const placed: { x: number; y: number; communityId: number | null }[] = [];
+      instance.nodes().forEach((n) => {
+        if (n.style("display") === "none") return;
+        const p = n.renderedPosition();
+        placed.push({ x: p.x, y: p.y, communityId: (n.data("communityId") as number | null) ?? null });
+      });
+      const hulls = communityHulls(placed);
+      for (const hull of hulls) {
+        const hue = (hull.communityId * 137) % 360;
+        ctx.beginPath();
+        // Stroke width doubles as padding: a round join puffs the outline out
+        // past the outermost nodes without computing an offset polygon.
+        hull.points.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+        ctx.closePath();
+        ctx.lineJoin = "round";
+        ctx.lineWidth = 36;
+        ctx.strokeStyle = `hsla(${hue}, 60%, 55%, 0.10)`;
+        ctx.fillStyle = `hsla(${hue}, 60%, 55%, 0.10)`;
+        ctx.stroke();
+        ctx.fill();
+      }
+    };
+    instance.on("render", drawHulls);
+
+
     // Dev-only handle. Everything this component draws lives in a canvas, so
     // there is no DOM to inspect when a graph looks wrong -- `window.cy` in
     // the console is the only way to ask where a node actually is. Stripped
@@ -525,6 +571,8 @@ export function GraphCanvas({
 
     return () => {
       observer.disconnect();
+      instance.off("render", drawHulls);
+      hullCanvas.remove();
       el.removeEventListener("wheel", markAdjusted);
       liveRef.current?.stop();
       instance.destroy();
