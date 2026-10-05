@@ -30,6 +30,7 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -115,6 +116,8 @@ def create_app(db_url: str | None = None) -> FastAPI:
             filters,
             ranking,
             asyncio.get_running_loop(),
+            # Same location `embed-backfill` writes; absent files mean no fusion.
+            embedding_stem=Path(settings.db_path).parent / "embeddings",
         )
         deps.set_runtime(engine, client, worker)
         worker.start()

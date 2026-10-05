@@ -181,6 +181,25 @@ def embedding_candidates(
     return store.top_k(query.tolist(), k, exclude=[*anchors, *exclude])
 
 
+def rank_by_similarity(
+    store: EmbeddingStore, anchor_ids: Iterable[int], candidate_ids: Iterable[int]
+) -> list[int]:
+    """
+    `candidate_ids` that have a vector, best-first by cosine to the anchors'
+    centroid, ties on paper_id. Empty when no anchor has a vector.
+    """
+    query = centroid(store, anchor_ids)
+    if query is None:
+        return []
+    scored = [
+        (pid, float(v @ query))
+        for pid in sorted(set(candidate_ids))
+        if (v := store.get(pid)) is not None
+    ]
+    scored.sort(key=lambda t: (-t[1], t[0]))
+    return [pid for pid, _ in scored]
+
+
 @dataclass(frozen=True, slots=True)
 class BackfillResult:
     """What a backfill did. `unavailable` is S2 having no vector -- not an error."""

@@ -198,3 +198,22 @@ def test_embedding_candidates_independent_of_anchor_order() -> None:
     for pid, v in enumerate([[1, 0, 0, 0], [0, 1, 0, 0], [1, 1, 0, 0], [1, 0, 1, 0]], start=1):
         s.put(pid, v, "h")
     assert embedding_candidates(s, [1, 2], 5) == embedding_candidates(s, [2, 1, 1], 5)
+
+
+def test_rank_by_similarity_orders_by_cosine_and_skips_vectorless() -> None:
+    from app.services.embeddings import rank_by_similarity
+
+    s = _store()
+    s.put(1, [1, 0, 0, 0], "h")  # anchor
+    s.put(2, [1, 1, 0, 0], "h")  # cos ~0.707
+    s.put(3, [1, 0.1, 0, 0], "h")  # cos ~0.995
+    s.put(5, [0, 1, 0, 0], "h")  # cos 0
+    assert rank_by_similarity(s, [1], [5, 4, 3, 2]) == [3, 2, 5]  # 4 has no vector
+
+
+def test_rank_by_similarity_is_silent_without_an_anchor_vector() -> None:
+    from app.services.embeddings import rank_by_similarity
+
+    s = _store()
+    s.put(2, [1, 0, 0, 0], "h")
+    assert rank_by_similarity(s, [1], [2]) == []

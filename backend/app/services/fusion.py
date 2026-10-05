@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from app.services.candidates import PoolEntry
+
 # Cormack et al. (2009). Larger k flattens the head; 60 is the published default.
 RRF_K = 60
 
@@ -44,4 +46,41 @@ def reciprocal_rank_fusion(
     return fused if limit is None else fused[:limit]
 
 
-__all__ = ["RRF_K", "reciprocal_rank_fusion"]
+# Below this share of the pool having a vector, fusing would reward the papers
+# that happen to be embedded rather than the ones that are similar. Untuned.
+MIN_EMBEDDING_COVERAGE = 0.8
+
+
+def fuse_pool(
+    scored: Sequence[tuple[PoolEntry, float]],
+    embedding_ranking: Sequence[int],
+    *,
+    min_coverage: float = MIN_EMBEDDING_COVERAGE,
+) -> list[tuple[PoolEntry, float]]:
+    """
+    Re-score a graph pool by fusing its prescore ranking with an embedding
+    ranking of the same papers (R6.13).
+
+    `embedding_ranking` is best-first and may name papers outside the pool
+    (ignored) or omit pool papers (they have no vector). Fusion only happens
+    when at least `min_coverage` of the pool is ranked; otherwise `scored` is
+    returned unchanged, so a half-filled embedding store cannot skew selection.
+
+    This reorders the pool; it does not admit anything new. A paper reached
+    only by embedding has no filter verdict, and admitting one is the cascade's
+    job, not this function's.
+    """
+    if not scored:
+        return []
+    pool_ids = {entry.paper_id for entry, _ in scored}
+    in_pool = [pid for pid in embedding_ranking if pid in pool_ids]
+    if len(set(in_pool)) < min_coverage * len(pool_ids) or not in_pool:
+        return list(scored)
+    graph_ranking = [
+        entry.paper_id for entry, _ in sorted(scored, key=lambda t: (-t[1], t[0].paper_id))
+    ]
+    fused = dict(reciprocal_rank_fusion([graph_ranking, in_pool]))
+    return [(entry, fused[entry.paper_id]) for entry, _ in scored]
+
+
+__all__ = ["MIN_EMBEDDING_COVERAGE", "RRF_K", "fuse_pool", "reciprocal_rank_fusion"]

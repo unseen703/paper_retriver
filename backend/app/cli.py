@@ -257,6 +257,7 @@ async def _seed(title: str, expand_after: bool, max_new: int, force: bool) -> in
                 filters,
                 ranking,
                 as_of,
+                embeddings=EmbeddingStore.load(embedding_stem()),
             )
             typer.echo(
                 f"expanded: pool={result.n_pool} added={result.n_added}"
