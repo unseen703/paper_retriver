@@ -27,6 +27,7 @@ import type { GraphEdgeOut, GraphNodeOut } from "../api/client";
 import {
   inTopicGroup,
   isVisibleAt,
+  idealEdgeLength,
   matchesQuery,
   navigableNodes,
   nodeRepulsion,
@@ -59,10 +60,8 @@ cytoscape.use(fcose);
 // matters -- not React Flow, not raw D3 -- is untouched.
 cytoscape.use(cola);
 
-// At R1 there are no communities, so edge length is constant. PLAN.md's
-// community-aware version (45 inside a cluster, 220 across) arrives with
-// Leiden at R6 -- "at R1, before communities exist, use a constant
-// idealEdgeLength -- it's fine for 100 nodes".
+// Fallback edge length for an edge with an unassigned endpoint. Edges between
+// community-assigned nodes use `idealEdgeLength` (45 intra / 220 inter, R6).
 const IDEAL_EDGE_LENGTH = 95;
 
 // Clear space between two node edges after the separation pass, in graph
@@ -1010,7 +1009,12 @@ function runLayout(
       // what makes a dense graph unreadable even when the discs technically
       // clear each other.
       nodeDimensionsIncludeLabels: true,
-      idealEdgeLength: () => IDEAL_EDGE_LENGTH,
+      idealEdgeLength: (edge: cytoscape.EdgeSingular) =>
+        idealEdgeLength(
+          edge.source().data("communityId"),
+          edge.target().data("communityId"),
+          IDEAL_EDGE_LENGTH,
+        ),
       // Seeds AND liked papers push harder, so the clusters they anchor stay
       // apart from each other and from the candidate cloud around them --
       // otherwise the papers that matter most get buried in the densest part
