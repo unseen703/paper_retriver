@@ -33,6 +33,7 @@ from app.db import make_engine
 from app.logging_setup import bind_session, configure_logging
 from app.repo import papers as papers_repo
 from app.services.categories import CategoryResolver
+from app.services.dedup import DuplicateCandidate, duplicate_candidates
 from app.services.embeddings import BackfillResult, EmbeddingFetcher, EmbeddingStore, backfill
 from app.services.expansion import ExpandParams, expand
 from app.services.filters.cascade import CascadeStats, run_cascade
@@ -380,6 +381,46 @@ async def _embed_backfill() -> None:
 def embed_backfill() -> None:
     """Fetch SPECTER2 vectors from S2 for papers that lack one (no inference here)."""
     asyncio.run(_embed_backfill())
+
+
+# ---------------------------------------------------------------------------
+# dup-report -- R6 dedup upgrade, surfaced
+# ---------------------------------------------------------------------------
+
+
+def run_dup_report(engine: Engine, stem: Path) -> list[DuplicateCandidate]:
+    """
+    Pairs of stored papers that look like one paper twice, for human review.
+
+    Read-only: nothing is merged. Split from the command so tests drive it with
+    a temp DB and store. Empty when no vectors exist yet.
+    """
+    store = EmbeddingStore.load(stem)
+    with engine.connect() as conn:
+        papers = papers_repo.get_papers_by_ids(conn, papers_repo.list_ids(conn))
+    titles = {p.id: p.title for p in papers if p.id is not None and p.title}
+    return duplicate_candidates(store, titles)
+
+
+@app.command("dup-report")
+def dup_report() -> None:
+    """List probable duplicate papers (cosine AND title agree). Never merges."""
+    engine = make_engine()
+    try:
+        pairs = run_dup_report(engine, embedding_stem())
+        with engine.connect() as conn:
+            by_id = {
+                p.id: p.title
+                for p in papers_repo.get_papers_by_ids(conn, [i for c in pairs for i in (c.a, c.b)])
+            }
+    finally:
+        engine.dispose()
+    for c in pairs:
+        typer.echo(
+            f"cos={c.cosine:.3f} title={c.title_similarity:.2f}"
+            f"  #{c.a} {by_id.get(c.a)!r}  ~  #{c.b} {by_id.get(c.b)!r}"
+        )
+    typer.echo(f"duplicate_candidates={len(pairs)}")
 
 
 if __name__ == "__main__":
