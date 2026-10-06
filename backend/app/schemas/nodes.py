@@ -187,9 +187,8 @@ class LabelResponse(BaseModel):
     rescored_count: int = Field(
         default=0,
         description=(
-            "Nodes whose score changed as a result. Always 0 until R3 ships"
-            " ranking -- reported now so the contract does not change shape"
-            " when it starts being non-zero."
+            "Nodes in this session re-scored as a result of the label change."
+            " 0 for a no-op relabel, which changes nothing."
         ),
     )
 

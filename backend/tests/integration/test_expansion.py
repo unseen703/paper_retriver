@@ -139,6 +139,24 @@ async def test_seeding_bert_and_expanding_adds_nodes(
     assert len(node_ids) == result.n_added + 1
 
 
+async def test_an_expansion_assigns_every_drawn_node_a_community(
+    env: tuple[Engine, CachedOnlyS2Client],
+) -> None:
+    """R6.8: the detector runs after the commit, so no drawn node is left unclustered."""
+    engine, client = env
+    await _seed_bert(engine, client)
+    result = await expand(
+        engine, client, SESSION, ExpandParams(max_new=20), filters_cfg, ranking_cfg, AS_OF
+    )
+    assert result.n_added > 0
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("SELECT community_id FROM graph_nodes WHERE session_id = :s"), {"s": SESSION}
+        ).fetchall()
+    assert len(rows) == result.n_added + 1
+    assert all(r[0] is not None for r in rows)
+
+
 async def test_no_rejected_paper_reaches_the_graph(
     env: tuple[Engine, CachedOnlyS2Client],
 ) -> None:
@@ -399,3 +417,96 @@ async def test_every_added_node_records_its_provenance(
         ).scalar()
     assert result.expansion_id is not None
     assert unattributed == 0
+
+
+async def test_embeddings_reorder_selection_but_admit_nothing_new(
+    env: tuple[Engine, CachedOnlyS2Client],
+) -> None:
+    """R6.13: a store that favours the lowest-prescore half changes who is admitted,
+    and everything admitted was already in the graph-reachable pool."""
+    from app.repo import graph as graph_repo
+    from app.services.candidates import build_pool, prescore
+    from app.services.embeddings import EmbeddingStore
+
+    engine, client = env
+    seed = await _seed_bert(engine, client)
+    base = await expand(
+        engine, client, SESSION, ExpandParams(max_new=5), filters_cfg, ranking_cfg, AS_OF
+    )
+    with engine.connect() as conn:
+        pool = build_pool(conn, SESSION, [seed], filters_cfg, AS_OF)
+    assert base.n_added > 0 and len(pool) > base.n_added
+    # Clear the session, then expand again with vectors that rank the pool in
+    # reverse prescore order (anchor vector is e0; worse prescore -> smaller y -> closer).
+    with engine.begin() as conn:
+        for pid in list(graph_repo.get_node_ids(conn, SESSION)):
+            if pid != seed:
+                conn.execute(
+                    text("DELETE FROM graph_nodes WHERE session_id=:s AND paper_id=:p"),
+                    {"s": SESSION, "p": pid},
+                )
+    with engine.connect() as conn:
+        pool = build_pool(conn, SESSION, [seed], filters_cfg, AS_OF)
+    ordered = sorted(pool, key=lambda e: (prescore(e, filters_cfg), e.paper_id))
+    store = EmbeddingStore(dim=4)
+    store.put(seed, [1, 0, 0, 0], "h")
+    for rank, entry in enumerate(ordered):
+        store.put(entry.paper_id, [1.0, 0.01 * (rank + 1), 0, 0], "h")
+    fused = await expand(
+        engine,
+        client,
+        SESSION,
+        ExpandParams(max_new=5),
+        filters_cfg,
+        ranking_cfg,
+        AS_OF,
+        embeddings=store,
+    )
+    assert set(fused.added_paper_ids) <= {e.paper_id for e in pool}
+    assert set(fused.added_paper_ids) != set(base.added_paper_ids)
+
+
+async def test_the_score_floor_still_applies_when_embeddings_are_fused(
+    env: tuple[Engine, CachedOnlyS2Client],
+) -> None:
+    """R6.13 / CLAUDE.md rule 8: the floor is on the prescore scale; fusing must not
+    turn an impossible floor into admit-everything, or a modest one into admit-nothing."""
+    from app.services.embeddings import EmbeddingStore
+
+    engine, client = env
+    seed = await _seed_bert(engine, client)
+    store = EmbeddingStore(dim=4)
+    store.put(seed, [1, 0, 0, 0], "h")
+    with engine.connect() as conn:
+        from app.services.candidates import build_pool
+
+        pool = build_pool(conn, SESSION, [seed], filters_cfg, AS_OF)
+    for i, entry in enumerate(pool):
+        store.put(entry.paper_id, [1.0, 0.01 * (i + 1), 0, 0], "h")
+
+    unreachable = ranking_cfg.model_copy(
+        update={"budget": ranking_cfg.budget.model_copy(update={"score_floor": 1e6})}
+    )
+    refused = await expand(
+        engine,
+        client,
+        SESSION,
+        ExpandParams(max_new=5),
+        filters_cfg,
+        unreachable,
+        AS_OF,
+        embeddings=store,
+    )
+    assert refused.n_added == 0
+
+    admitted = await expand(
+        engine,
+        client,
+        SESSION,
+        ExpandParams(max_new=5),
+        filters_cfg,
+        ranking_cfg,
+        AS_OF,
+        embeddings=store,
+    )
+    assert admitted.n_added > 0

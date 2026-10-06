@@ -558,28 +558,29 @@ The most valuable release. Do not skip or defer it.
 > what ships, but per-case difficulty is dominated by which three references the
 > sample happened to draw, and the write-up has to report the achievable ceiling
 > alongside the score.
-- [ ] Config sweep over weight grids → `eval/results/*.json`
-- [ ] `docs/evaluation.md` — protocol, results table, ≥3 ablations, failure analysis, and the limitations section from PLAN.md §R4 (that section is graded harder than the results)
-- [ ] `make eval` reproducible: same seed + config → identical metrics
+- [x] Config sweep over weight grids → `eval/results/*.json` — `eval/sweep.py`, pure over persisted features. **The runner that feeds it real pools (`eval/run.py`, the `make eval` target) is not built**; that belongs to the reproducible-`make eval` task below.
+- [~] `docs/evaluation.md` — **protocol and limitations written; results tables empty until the corpus has ≥150 eligible targets.** Protocol, results table, ≥3 ablations, failure analysis, and the limitations section from PLAN.md §R4 (that section is graded harder than the results)
+- [x] `make eval` reproducible: same seed + config → identical metrics — `eval/run.py` + `eval/pools.py`; writes `eval/results/eval.json` (ranker + 5 offline baselines + the pool recall ceiling; S2 `/recommendations` is listed under `not_run`). `citation_count` and the citing side of co-citation are today's values, not as-of-cutoff, so they leak slightly; `docs/evaluation.md` must say so.
 
 ### R5 — Personalization · 4–5 days
 
-- [ ] Personalized PageRank on `SEED ∪ LIKED` (`nx.pagerank(personalization=...)`, fixed tolerance for determinism)
-- [ ] Dislike proximity as a subtracted penalty term
-- [ ] Rocchio-style weight nudging after N labels
-- [ ] Live rescore + candidate reorder on every label
-- [ ] **Simulated-user eval:** reveal ground-truth papers as "likes" one at a time; assert Recall@20 rises
+- [x] Personalized PageRank on `SEED ∪ LIKED` (`nx.pagerank(personalization=...)`, fixed tolerance for determinism)
+ -- `graphops.personalized_pagerank`, stored as the `ppr` feature; **weight stays 0.00 until the benchmark shows it beats co-citation**
+- [x] Dislike proximity as a subtracted penalty term -- `dislike` feature (PPR restarted on DISLIKED, rank-normalized, absent when nothing is disliked or all values tie); session-only, so `eval/pools.py` cannot populate it and the benchmark cannot yet measure it. **Weight stays `-0.00` until the simulated-user eval can.**
+- [x] Rocchio-style weight nudging after N labels -- `services/rocchio.py`, pure; zero weights stay zero, signs never flip, nothing persisted. **Not yet wired to labels (R5.4) or measured (simulated-user eval).**
+- [x] Live rescore + candidate reorder on every label -- `PATCH .../nodes/{id}` recomputes the session's features (`ppr`/`dislike` depend on labels) and applies the Rocchio-nudged weights to scores only, never persisted; `rescored_count` is now real. **Frontend reorder rides the existing `/candidates` refetch; not yet measured by the simulated-user eval.**
+- [x] **Simulated-user eval:** reveal ground-truth papers as "likes" one at a time; assert Recall@20 rises -- `eval/simulate.py`, written to `eval/results/eval.json` under `simulated_user`. Revealed papers leave both ranking and truth. Simulates the Rocchio nudge only (`ppr`/`dislike` need a session; no dislikes are invented). **A measurement, not an assertion on real data** -- the rise is proven on a hand-built pool; whether it rises on the corpus is for `docs/evaluation.md`.
 - [ ] **If PPR doesn't beat co-citation on the benchmark, keep the simpler model and write that up.** A documented negative result is a strong signal.
 
 ### R6 — Embeddings and clustering · 5–7 days
 
-- [ ] SPECTER2 over title+abstract (check first whether S2 serves `embedding.specter_v2` — if so, inference cost is zero)
-- [ ] Store as `data/embeddings.npy` + an id index. Brute-force cosine over 3k×768 is sub-millisecond. **No vector DB.**
-- [ ] **The release's actual justification:** embedding-generated candidates that the citation graph *cannot* reach (concurrent work with no citation path). Report how many benchmark recoveries came only from this channel. If that number is near zero, the release didn't earn its place — say so.
-- [ ] Reciprocal rank fusion of graph and embedding pools
-- [ ] Dedup upgrade: cosine > 0.97 + title similarity → duplicate candidates for review
-- [ ] Leiden communities → `community_id` → cluster-aware `idealEdgeLength` (45 intra / 220 inter) + convex hulls + TF-IDF cluster labels
-- [ ] Filter stage 3 upgrade: exemplar-centroid core-vs-applied classifier with a quarantine margin, trained on your accumulated drawer decisions
+- [~] SPECTER2 over title+abstract (check first whether S2 serves `embedding.specter_v2` — if so, inference cost is zero) -- `S2Client.get_embeddings` fetches it and degrades to empty when absent; **whether the live batch endpoint serves it is still unverified** (no network in the build environment; re-verify item 1 in `docs/s2-api-notes.md`). Backfill service written (`embeddings.backfill`: skips stubs and fresh hashes, sorted ids, caller saves); called from `python -m app.cli embed-backfill` (R6.11; writes `data/embeddings.{npy,json}`).
+- [x] Store as `data/embeddings.npy` + an id index. Brute-force cosine over 3k×768 is sub-millisecond. **No vector DB.** -- `services/embeddings.py`: rows unit-normalised, per-row text hash for cache invalidation, `(-score, paper_id)` ordering, atomic save.
+- [~] **The release's actual justification:** embedding-generated candidates that the citation graph *cannot* reach (concurrent work with no citation path). Report how many benchmark recoveries came only from this channel. If that number is near zero, the release didn't earn its place — say so. -- channel written (`embeddings.embedding_candidates`: anchor centroid, pure, silent without vectors); **the only-from-this-channel recovery count is not yet measured** (needs vectors in the store and an eval hook).
+- [~] Reciprocal rank fusion of graph and embedding pools -- `services/fusion.py`: pure, rank-based, `(-score, paper_id)` ties. **Wired (R6.13) as a rerank of the graph pool only:** `fuse_pool` fuses prescore with similarity-to-anchors inside `expand`, silent below 80% vector coverage; `score_floor` is applied on prescore *before* fusion because an RRF score (~0.03) is not on its scale. **Embedding-only candidates are still not admitted** -- a paper the graph never reached has no filter verdict, so admitting one needs the cascade, which is a separate task. Needs vectors in the store (`embed-backfill`) to have any effect.
+- [~] Dedup upgrade: cosine > 0.97 + title similarity → duplicate candidates for review -- `dedup.duplicate_candidates`: pure, BOTH cosine ≥ 0.97 and normalized-title ratio ≥ 0.85, ordered `(-cosine, a, b)`; a review list, never an automatic merge. Surfaced as `python -m app.cli dup-report` (R6.14; read-only, needs vectors in the store). **Not yet in the API/drawer.**
+- [~] Leiden communities → `community_id` → cluster-aware `idealEdgeLength` (45 intra / 220 inter) + convex hulls + TF-IDF cluster labels -- done: `communities.detect_communities` (seeded Louvain, deterministic ids; R6.6) and `cluster_labels.label_communities` (pure TF-IDF over cluster titles; R6.7). `refresh_communities` now runs after every expansion and `GET /graph` serves `community_id` (R6.8). Cluster-aware fcose `idealEdgeLength` (45 intra / 220 inter; unassigned endpoints keep the old constant) is done (R6.9). Convex hulls are done (R6.10: `communityHulls.ts` pure geometry, drawn on an overlay canvas under Cytoscape's layers). **Not done:** persisting/serving labels (no column for them in the schema -- needs a decision).
+- [~] Filter stage 3 upgrade: exemplar-centroid core-vs-applied classifier with a quarantine margin, trained on your accumulated drawer decisions -- `filters/applied_filter.py` (R6.12): pure, cosine margin to core vs applied centroid; ACCEPT only on a clear core margin, everything else QUARANTINE, **never REJECT** (pinned by test). **Not wired into the cascade, and no code builds the centroids from drawer decisions yet** (needs vectors in the store); the 0.05 margin is a module constant, untuned.
 - [ ] **Reconsider `cs.CV`.** By now the drawer will show whether you've been restoring cs.CV papers. If you have, move it to BORDERLINE — one line of YAML, and you'll have the evidence.
 
 **After R6: stop.** R0–R6 is a complete, measured system. R7 (LTR) and R8 (GNN) are optional experiments, justified only if R4 shows a specific gap. That restraint is itself the thing the project demonstrates.
