@@ -32,6 +32,7 @@ from baselines import (
     unranked_bfs,
 )
 from build_benchmark import BenchmarkCase, eligible_targets, make_case, references_of
+from channel import channel_ids, not_run, recovery, summarize
 from pools import build_scored_pool
 from simulate import simulate_user
 from sqlalchemy import Connection
@@ -41,6 +42,7 @@ from app.config import filters, ranking
 from app.db import make_engine
 from app.repo import papers as papers_repo
 from app.services.candidates import PoolEntry
+from app.services.embeddings import EmbeddingStore
 
 DEFAULT_SEED = 20260916
 DEFAULT_OUT = Path("eval/results")
@@ -80,7 +82,12 @@ def _candidates(entries: Sequence[PoolEntry], years: Mapping[int, int | None]) -
 
 
 def run_eval(
-    conn: Connection, *, seed: int, as_of_year: int, limit: int = 300
+    conn: Connection,
+    *,
+    seed: int,
+    as_of_year: int,
+    limit: int = 300,
+    embeddings: EmbeddingStore | None = None,
 ) -> dict[str, object]:
     """Score the real ranker and every offline baseline on the same pools."""
     cases = build_cases(conn, seed, limit)
@@ -88,6 +95,7 @@ def run_eval(
     truths: dict[int, frozenset[int]] = {}
     pools = []
     reachable: list[float] = []
+    channel = []
 
     for case_id, case in enumerate(cases, start=1):
         pool, entries = build_scored_pool(conn, case_id, case, filters, as_of_year)
@@ -109,6 +117,8 @@ def run_eval(
 
         # The ceiling no ranking can pass: ground truth that is in the pool at all.
         truth = pool.ground_truth
+        if embeddings is not None and len(embeddings):
+            channel.append(recovery(truth, pool.features, channel_ids(conn, embeddings, case)))
         reachable.append(len(truth & set(pool.features)) / len(truth) if truth else 0.0)
 
     # Leave-one-weight-out: what each term in the score is worth. Same pools,
@@ -131,6 +141,11 @@ def run_eval(
         # Reported beside the scores: a Recall@50 of 0.2 means something
         # different under a ceiling of 0.25 than under 0.9.
         "pool_recall_ceiling": sum(reachable) / len(reachable) if reachable else 0.0,
+        "embedding_channel": (
+            summarize(channel)
+            if channel
+            else not_run("no embedding store given (--embeddings), or it is empty")
+        ),
         "methods": {name: summarize_rankings(rankings[name], truths) for name in METHODS},
         "not_run": NOT_RUN,
     }
@@ -143,11 +158,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--limit", type=int, default=300)
     parser.add_argument("--as-of-year", type=int, default=datetime.now().year)
+    parser.add_argument("--embeddings", type=Path, help="embedding store stem (.npy/.json)")
     args = parser.parse_args(argv)
 
     engine = make_engine(args.db)
     with engine.connect() as conn:
-        result = run_eval(conn, seed=args.seed, as_of_year=args.as_of_year, limit=args.limit)
+        store = EmbeddingStore.load(args.embeddings) if args.embeddings else None
+        result = run_eval(
+            conn, seed=args.seed, as_of_year=args.as_of_year, limit=args.limit, embeddings=store
+        )
 
     if result["n_cases"] == 0:
         print("no eligible benchmark cases in this corpus", file=sys.stderr)

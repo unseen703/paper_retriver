@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
+from channel import channel_ids
 from pools import NO_SESSION, build_scored_pool
 from run import METHODS, NOT_RUN, build_cases, main, run_eval
 from sqlalchemy import Connection, Engine
@@ -31,6 +32,7 @@ from app.models import Paper
 from app.repo import edges as edges_repo
 from app.repo import papers as papers_repo
 from app.services.candidates import build_pool
+from app.services.embeddings import EmbeddingStore
 from app.services.features import FEATURE_NAMES
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -209,3 +211,48 @@ def test_ablations_cover_every_nonzero_weight_with_full_metrics(engine: Engine) 
     assert len(expected) >= 3  # the R4 DoD asks for at least three
     for metrics in ablations.values():
         assert set(metrics) == set(result["methods"]["ranker"])  # type: ignore[index]
+
+
+# --------------------------------------------------------------------------
+# The embedding channel (R6.15)
+# --------------------------------------------------------------------------
+
+
+def _store(ids: dict[str, int]) -> EmbeddingStore:
+    """Every paper, `future` included, sits in the same direction: all are neighbours."""
+    store = EmbeddingStore(dim=3)
+    for key, pid in sorted(ids.items()):
+        store.put(pid, [1.0, 0.01 * (pid % 7), 0.0], key)
+    return store
+
+
+def test_embedding_channel_is_not_run_without_a_store(engine: Engine) -> None:
+    _corpus(engine)
+    with engine.connect() as conn:
+        result = run_eval(conn, seed=SEED, as_of_year=AS_OF)
+    channel = result["embedding_channel"]
+    assert isinstance(channel, dict) and channel["status"] == "not_run"
+
+
+def test_embedding_channel_is_reported_and_deterministic(engine: Engine) -> None:
+    ids = _corpus(engine)
+    store = _store(ids)
+    with engine.connect() as conn:
+        a = run_eval(conn, seed=SEED, as_of_year=AS_OF, embeddings=store)
+        b = run_eval(conn, seed=SEED, as_of_year=AS_OF, embeddings=store)
+    channel = a["embedding_channel"]
+    assert isinstance(channel, dict) and channel["embedding"] > 0
+    assert channel["embedding_only"] <= channel["embedding"]
+    assert json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
+
+
+def test_the_embedding_channel_cannot_see_the_future(engine: Engine) -> None:
+    ids = _corpus(engine)
+    store = _store(ids)
+    with engine.connect() as conn:
+        (case,) = build_cases(conn, SEED, 300)
+        near = channel_ids(conn, store, case)
+    assert near
+    assert ids["future"] not in near  # 2024 paper, 2018 cutoff
+    assert ids["target"] not in near
+    assert not set(case.seed_ids) & set(near)
