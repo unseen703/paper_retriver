@@ -152,6 +152,25 @@ def non_accepted_paper_ids(conn: Connection, session_id: int, config_version: st
     return {row[0] for row in rows}
 
 
+def global_paper_ids_by_reason(
+    conn: Connection, config_version: str, reason_codes: list[str]
+) -> set[int]:
+    """Papers carrying a global, non-ACCEPT verdict with one of `reason_codes`."""
+    if not reason_codes:
+        return set()
+    binds = {f"r{i}": code for i, code in enumerate(sorted(reason_codes))}
+    marks = ", ".join(f":{k}" for k in binds)
+    rows = conn.execute(
+        text(
+            "SELECT DISTINCT paper_id FROM filter_decisions"
+            " WHERE session_id IS NULL AND outcome != 'ACCEPT'"
+            f"   AND config_version = :config_version AND reason_code IN ({marks})"
+        ),
+        {"config_version": config_version, **binds},
+    )
+    return {row[0] for row in rows}
+
+
 def count_by_reason(conn: Connection, session_id: int | None = None) -> list[tuple[str, str, int]]:
     """(outcome, reason_code, n) for R2.14's review drawer."""
     rows = conn.execute(

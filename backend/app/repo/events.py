@@ -194,6 +194,22 @@ def user_held_paper_ids(conn: Connection, session_id: int) -> set[int]:
     return {row[0] for row in rows}
 
 
+def paper_ids_with_latest_event(conn: Connection, session_id: int, event_type: str) -> set[int]:
+    """Papers whose most recent event in this session is `event_type`."""
+    rows = conn.execute(
+        text(
+            "SELECT e.paper_id FROM interaction_events e"
+            " WHERE e.session_id = :session_id AND e.event_type = :event_type"
+            "   AND e.id = ("
+            "     SELECT MAX(inner_e.id) FROM interaction_events inner_e"
+            "     WHERE inner_e.session_id = e.session_id AND inner_e.paper_id = e.paper_id"
+            "   )"
+        ),
+        {"session_id": session_id, "event_type": event_type},
+    )
+    return {row[0] for row in rows}
+
+
 def removed_paper_ids(conn: Connection, session_id: int) -> set[int]:
     """
     Papers whose latest event is a tombstone.
