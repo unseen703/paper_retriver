@@ -510,3 +510,130 @@ async def test_the_score_floor_still_applies_when_embeddings_are_fused(
         embeddings=store,
     )
     assert admitted.n_added > 0
+
+
+# --- R6.18: embedding-only candidates ---------------------------------------
+
+
+def _outsider(engine: Engine, s2_id: str, **over: object) -> int:
+    """A stored paper with no citation edge to anything: only a vector can reach it."""
+    from app.models import Paper
+    from app.repo import papers as papers_repo
+
+    base: dict[str, object] = {
+        "s2_paper_id": s2_id,
+        "title": f"Concurrent Work {s2_id}",
+        "first_seen_at": "2026-01-01",
+        "year": 2021,
+        "primary_arxiv_category": "cs.LG",
+    }
+    base.update(over)
+    with engine.begin() as conn:
+        return papers_repo.upsert_paper(conn, Paper(**base))  # type: ignore[arg-type]
+
+
+def _store_with(seed: int, others: dict[int, list[float]]):  # noqa: ANN202
+    from app.services.embeddings import EmbeddingStore
+
+    store = EmbeddingStore(dim=4)
+    store.put(seed, [1, 0, 0, 0], "h")
+    for pid, vec in others.items():
+        store.put(pid, vec, "h")
+    return store
+
+
+async def test_a_vector_neighbour_with_no_citation_path_is_admitted(
+    env: tuple[Engine, CachedOnlyS2Client],
+) -> None:
+    engine, client = env
+    seed = await _seed_bert(engine, client)
+    outsider = _outsider(engine, "outsider-1")
+    store = _store_with(seed, {outsider: [1.0, 0.01, 0, 0]})
+    result = await expand(
+        engine,
+        client,
+        SESSION,
+        ExpandParams(max_new=50),
+        filters_cfg,
+        ranking_cfg,
+        AS_OF,
+        embeddings=store,
+    )
+    assert outsider in result.added_paper_ids
+    with engine.connect() as conn:
+        n_edges = conn.execute(
+            text("SELECT COUNT(*) FROM edges WHERE citing_id=:p OR cited_id=:p"), {"p": outsider}
+        ).scalar()
+    assert n_edges == 0
+
+
+async def test_an_embedding_only_paper_still_has_to_pass_the_cascade(
+    env: tuple[Engine, CachedOnlyS2Client],
+) -> None:
+    engine, client = env
+    seed = await _seed_bert(engine, client)
+    pre_era = _outsider(engine, "outsider-old", year=2012)
+    store = _store_with(seed, {pre_era: [1.0, 0.0, 0, 0]})
+    result = await expand(
+        engine,
+        client,
+        SESSION,
+        ExpandParams(max_new=50),
+        filters_cfg,
+        ranking_cfg,
+        AS_OF,
+        embeddings=store,
+    )
+    assert pre_era not in result.added_paper_ids
+    with engine.connect() as conn:
+        reason = conn.execute(
+            text("SELECT reason_code FROM filter_decisions WHERE paper_id=:p"), {"p": pre_era}
+        ).scalar()
+    assert reason == "PRE_ERA"
+
+
+async def test_a_removed_embedding_neighbour_does_not_come_back(
+    env: tuple[Engine, CachedOnlyS2Client],
+) -> None:
+    from app.repo import events as events_repo
+
+    engine, client = env
+    seed = await _seed_bert(engine, client)
+    outsider = _outsider(engine, "outsider-2")
+    store = _store_with(seed, {outsider: [1.0, 0.01, 0, 0]})
+    with engine.begin() as conn:
+        events_repo.append_event(conn, SESSION, outsider, "REMOVED")
+    result = await expand(
+        engine,
+        client,
+        SESSION,
+        ExpandParams(max_new=50),
+        filters_cfg,
+        ranking_cfg,
+        AS_OF,
+        embeddings=store,
+    )
+    assert outsider not in result.added_paper_ids
+
+
+async def test_the_channel_is_silent_when_the_anchor_has_no_vector(
+    env: tuple[Engine, CachedOnlyS2Client],
+) -> None:
+    from app.services.embeddings import EmbeddingStore
+
+    engine, client = env
+    await _seed_bert(engine, client)
+    outsider = _outsider(engine, "outsider-3")
+    store = EmbeddingStore(dim=4)
+    store.put(outsider, [1, 0, 0, 0], "h")
+    result = await expand(
+        engine,
+        client,
+        SESSION,
+        ExpandParams(max_new=50),
+        filters_cfg,
+        ranking_cfg,
+        AS_OF,
+        embeddings=store,
+    )
+    assert outsider not in result.added_paper_ids

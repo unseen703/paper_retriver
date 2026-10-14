@@ -32,6 +32,7 @@ from app.services.budget import allocate
 from app.services.candidates import build_pool, prescore
 from app.services.categories import CategoryResolver
 from app.services.communities import refresh_communities
+from app.services.embedding_pool import embedding_only_entries
 from app.services.embeddings import EmbeddingStore, rank_by_similarity
 from app.services.exemplars import build_applied_stage
 from app.services.features import compute_and_store_features
@@ -231,12 +232,30 @@ async def expand(
         # leaves `scored` untouched.
         budget_cfg = ranking_cfg.budget
         if embeddings is not None and len(embeddings):
-            ranking = rank_by_similarity(embeddings, anchors, (e.paper_id for e in pool))
             # `score_floor` is written on the prescore scale (see allocate), and
             # an RRF score is ~0.03, so a floor applied after fusion would
             # refuse everything. Apply it here, on prescore, and hand allocate
             # a copy with the floor already spent.
+            pool_ids = {e.paper_id for e in pool}
             scored = [c for c in scored if c[1] >= budget_cfg.score_floor]
+            # R6.18: papers the graph never reached, admitted only if the
+            # cascade accepts them. Added *after* the floor: the floor reads
+            # "how many anchors must agree", and this channel has none by
+            # construction. The budget still caps how many are taken.
+            extra = embedding_only_entries(
+                conn,
+                session_id,
+                embeddings,
+                anchors,
+                pool_ids,
+                filters_cfg,
+                as_of_year,
+                resolver=resolver,
+                applied=applied,
+            )
+            scored += [(entry, prescore(entry, filters_cfg)) for entry in extra]
+            result.n_pool += len(extra)
+            ranking = rank_by_similarity(embeddings, anchors, (c[0].paper_id for c in scored))
             scored = fuse_pool(scored, ranking)
             budget_cfg = budget_cfg.model_copy(update={"score_floor": float("-inf")})
         room = max(0, params.max_nodes - len(graph_repo.get_node_ids(conn, session_id)))
