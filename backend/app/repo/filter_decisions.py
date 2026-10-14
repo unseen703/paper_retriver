@@ -77,6 +77,25 @@ def record(
     )
 
 
+def clear_session_stage(
+    conn: Connection, session_id: int, paper_id: int, config_version: str, stage: str
+) -> None:
+    """Drop this session's own verdict for one stage, leaving global rows alone."""
+    conn.execute(
+        text(
+            "DELETE FROM filter_decisions"
+            " WHERE paper_id = :paper_id AND session_id = :session_id"
+            "   AND config_version = :config_version AND stage = :stage"
+        ),
+        {
+            "paper_id": paper_id,
+            "session_id": session_id,
+            "config_version": config_version,
+            "stage": str(stage),
+        },
+    )
+
+
 def find_global_rejection(
     conn: Connection, paper_id: int, config_version: str
 ) -> FilterDecision | None:
@@ -185,6 +204,7 @@ def count_by_reason(conn: Connection, session_id: int | None = None) -> list[tup
 
 
 __all__ = [
+    "clear_session_stage",
     "count_by_reason",
     "find_global_rejection",
     "non_accepted_paper_ids",

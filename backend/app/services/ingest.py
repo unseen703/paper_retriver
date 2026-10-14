@@ -40,6 +40,7 @@ from app.repo import edges as edges_repo
 from app.repo import graph as graph_repo
 from app.repo import papers as papers_repo
 from app.services.categories import CategoryResolver
+from app.services.exemplars import AppliedStage
 from app.services.filters.cascade import CascadeStats, run_cascade
 
 logger = logging.getLogger(__name__)
@@ -77,6 +78,7 @@ def ingest_neighbour(
     depth: int = 1,
     admit: bool = True,
     resolver: CategoryResolver | None = None,
+    applied: AppliedStage | None = None,
 ) -> FilterDecision:
     """
     Store one fetched neighbour and its edge, then decide graph admission.
@@ -123,7 +125,7 @@ def ingest_neighbour(
         # reject the insert, so skip rather than raise.
         logger.info("SELF_CITATION_SKIPPED paper_id=%s", anchor_id)
         return run_cascade(
-            conn, session_id, neighbour_id, neighbour, cfg, as_of_year, stats.cascade
+            conn, session_id, neighbour_id, neighbour, cfg, as_of_year, stats.cascade, applied
         )
 
     if direction == "BACKWARD":
@@ -132,7 +134,7 @@ def ingest_neighbour(
         edges_repo.upsert_edge(conn, neighbour_id, anchor_id, "FORWARD")
 
     decision = run_cascade(
-        conn, session_id, neighbour_id, neighbour, cfg, as_of_year, stats.cascade
+        conn, session_id, neighbour_id, neighbour, cfg, as_of_year, stats.cascade, applied
     )
 
     if decision.outcome is Outcome.ACCEPT:

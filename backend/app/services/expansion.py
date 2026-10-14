@@ -33,6 +33,7 @@ from app.services.candidates import build_pool, prescore
 from app.services.categories import CategoryResolver
 from app.services.communities import refresh_communities
 from app.services.embeddings import EmbeddingStore, rank_by_similarity
+from app.services.exemplars import build_applied_stage
 from app.services.features import compute_and_store_features
 from app.services.fusion import fuse_pool
 from app.services.ingest import IngestStats, ingest_neighbour
@@ -97,6 +98,8 @@ async def expand(
     result = ExpansionResult()
     # One resolver for the run: enrich() is a single bulk query per batch.
     resolver = CategoryResolver(engine)
+    with engine.connect() as conn:
+        applied = build_applied_stage(conn, session_id, embeddings, filters_cfg.config_version)
     calls_at_start = client.api_calls
     hits_at_start = client.cache_hits
 
@@ -198,6 +201,7 @@ async def expand(
                         result.ingest,
                         admit=False,
                         resolver=resolver,
+                        applied=applied,
                     )
         if result.truncated:
             break

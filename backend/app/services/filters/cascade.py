@@ -27,14 +27,16 @@ paper the new rules exclude.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from sqlalchemy import Connection
 
 from app.config import FiltersConfig
 from app.models import FilterDecision, Paper
 from app.repo import filter_decisions as decisions_repo
-from app.services.filters.base import should_continue
+from app.services.exemplars import AppliedStage
+from app.services.filters.applied_filter import applied_filter
+from app.services.filters.base import FilterStage, should_continue
 from app.services.filters.era_filter import era_filter
 from app.services.filters.topic_filter import topic_filter
 from app.services.filters.type_filter import type_filter
@@ -68,6 +70,7 @@ def run_cascade(
     cfg: FiltersConfig,
     as_of_year: int,
     stats: CascadeStats | None = None,
+    applied: AppliedStage | None = None,
 ) -> FilterDecision:
     """
     Decide whether `paper` may enter the graph, and record why.
@@ -102,6 +105,28 @@ def run_cascade(
 
     if decision is None:  # pragma: no cover - `stages` is a non-empty literal
         raise RuntimeError("cascade produced no decision")
+
+    if should_continue(decision):
+        vector = applied.store.get(paper_id) if applied is not None else None
+        if applied is not None and vector is not None:
+            # Stage 3 reads the user's own exemplars, so its verdict is about
+            # this session and must not be cached as a global fact. It never
+            # rejects (pinned in applied_filter), so the global-rejection cache
+            # above is unaffected.
+            decision = replace(
+                applied_filter(
+                    vector.tolist(),
+                    applied.centroids.core.tolist(),
+                    applied.centroids.applied.tolist(),
+                ),
+                is_global=False,
+            )
+        else:
+            # Stage 3 is silent. A session-scoped APPLIED quarantine left by an
+            # earlier run would otherwise keep excluding this paper for good.
+            decisions_repo.clear_session_stage(
+                conn, session_id, paper_id, cfg.config_version, FilterStage.APPLIED
+            )
     decisions_repo.record(conn, session_id, paper_id, decision, cfg.config_version)
     return decision
 

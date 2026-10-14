@@ -14,7 +14,7 @@ Only papers with a stored vector count. With fewer than `MIN_EXEMPLARS` of eithe
 kind the answer is None, and the cascade stays silent -- two exemplars is an
 anecdote, not a centroid.
 
-Not wired into the cascade; that needs the store loaded at call time.
+`build_applied_stage` packages the centroids and the store for `run_cascade`.
 """
 
 from __future__ import annotations
@@ -49,6 +49,20 @@ class Centroids:
     n_applied: int
 
 
+@dataclass(frozen=True)
+class AppliedStage:
+    """
+    What stage 3 needs at call time: the exemplar centroids and the vector store.
+
+    Optional on `run_cascade`. Without it -- or for a paper with no stored
+    vector -- stage 3 does not run at all, rather than quarantining everything
+    it cannot see: no vectors means no evidence, and no evidence is not a verdict.
+    """
+
+    centroids: Centroids
+    store: EmbeddingStore
+
+
 def load_exemplar_ids(conn: Connection, session_id: int, config_version: str) -> ExemplarIds:
     by_state = graph.get_nodes_by_state(conn, session_id)
     core = (
@@ -75,11 +89,22 @@ def build_centroids(
     return Centroids(core, applied, len(core_ids), len(applied_ids))
 
 
+def build_applied_stage(
+    conn: Connection, session_id: int, store: EmbeddingStore | None, config_version: str
+) -> AppliedStage | None:
+    """Stage 3's inputs, or None when there is no store or too little evidence."""
+    if store is None or not len(store):
+        return None
+    centroids = build_centroids(store, load_exemplar_ids(conn, session_id, config_version))
+    return None if centroids is None else AppliedStage(centroids, store)
+
+
 __all__ = [
     "APPLIED_REASONS",
     "MIN_EXEMPLARS",
     "Centroids",
     "ExemplarIds",
+    "build_applied_stage",
     "build_centroids",
     "load_exemplar_ids",
 ]
