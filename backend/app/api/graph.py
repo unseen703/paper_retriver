@@ -136,6 +136,7 @@ def get_graph(
                 primary_arxiv_category=paper.primary_arxiv_category,
                 in_degree=in_degree.get(node.paper_id, 0),
                 out_degree=out_degree.get(node.paper_id, 0),
+                community_id=node.community_id,
                 pos=(
                     Position(x=node.pos_x, y=node.pos_y)
                     if node.pos_x is not None and node.pos_y is not None

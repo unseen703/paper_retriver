@@ -1,5 +1,6 @@
 """The filter cascade. Import stages from here, not from the submodules."""
 
+from app.services.filters.applied_filter import applied_filter, exemplar_centroid
 from app.services.filters.base import (
     FilterStage,
     accept,
@@ -14,8 +15,10 @@ from app.services.filters.type_filter import citations_per_year, type_filter
 __all__ = [
     "FilterStage",
     "accept",
+    "applied_filter",
     "citations_per_year",
     "era_filter",
+    "exemplar_centroid",
     "is_core_venue",
     "quarantine",
     "reject",

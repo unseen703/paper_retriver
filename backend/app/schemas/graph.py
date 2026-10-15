@@ -48,6 +48,10 @@ class GraphNodeOut(BaseModel):
     in_degree: int = 0
     out_degree: int = 0
 
+    #: Louvain community (R6.6), `0` the biggest. Null until the session's first
+    #: expansion has run the detector; the client then draws no cluster hints.
+    community_id: int | None = None
+
     # Null until R2.12 persists a layout; the client lays out from scratch.
     pos: Position | None = None
 

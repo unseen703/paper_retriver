@@ -37,7 +37,9 @@ from collections.abc import Mapping
 
 from sqlalchemy import Engine, text
 
+from app.services.features import compute_and_store_features
 from app.services.ranking import score_paper
+from app.services.rocchio import nudge_weights
 
 logger = logging.getLogger(__name__)
 
@@ -116,4 +118,63 @@ def rescore_all(engine: Engine, weights: Mapping[str, float]) -> int:
     return scored
 
 
-__all__ = ["rescore_all"]
+def rescore_after_label(
+    engine: Engine, session_id: int, base_weights: Mapping[str, float], as_of_year: int
+) -> int:
+    """
+    Re-rank one session after a label change (R5.4).
+
+    Unlike `rescore_all`, this *does* recompute features: `ppr` and `dislike`
+    are functions of the labels, so a stored value is stale the moment a label
+    moves. Only this session is touched -- labels are per session, and the
+    other sessions' features have not changed.
+
+    The Rocchio-nudged weights (R5.3) apply to this session's scores only.
+    They are derived from the labels on every call and never persisted, so
+    un-labelling a paper takes the nudge back out with no state to unwind.
+    `base_weights` stay the configured ones.
+
+    Returns the number of nodes scored.
+    """
+    compute_and_store_features(engine, session_id, as_of_year, dict(base_weights))
+
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT paper_id, state, features FROM graph_nodes"
+                " WHERE session_id = :sid ORDER BY paper_id"
+            ),
+            {"sid": session_id},
+        ).fetchall()
+
+    parsed = [(int(pid), str(state), _features(raw)) for pid, state, raw in rows]
+    liked = [f for _, state, f in parsed if state == "LIKED" and f]
+    disliked = [f for _, state, f in parsed if state == "DISLIKED" and f]
+    nudged = nudge_weights(base_weights, liked, disliked)
+    if nudged == dict(base_weights):
+        return sum(1 for _, _, f in parsed if f)
+
+    scored = 0
+    with engine.begin() as conn:
+        for paper_id, _, features in parsed:
+            if not features:
+                continue
+            total, breakdown = score_paper(features, nudged)
+            conn.execute(
+                text(
+                    "UPDATE graph_nodes SET score = :score, score_breakdown = :breakdown"
+                    " WHERE session_id = :sid AND paper_id = :pid"
+                ),
+                {
+                    "score": total,
+                    "breakdown": json.dumps(breakdown),
+                    "sid": session_id,
+                    "pid": paper_id,
+                },
+            )
+            scored += 1
+    logger.info("label_rescored session=%s nodes=%s nudged=True", session_id, scored)
+    return scored
+
+
+__all__ = ["rescore_after_label", "rescore_all"]

@@ -23,12 +23,14 @@ usable transport at all.
 
 from __future__ import annotations
 
+from pathlib import Path as FsPath
 from typing import TYPE_CHECKING, Annotated
 
 from fastapi import Depends, HTTPException, Path
 from sqlalchemy import Engine, text
 
 from app.clients.s2 import S2Client
+from app.config import settings
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle: jobs imports nothing from here
     from app.services.jobs import JobWorker
@@ -60,6 +62,11 @@ def get_engine() -> Engine:
     if _engine is None:  # pragma: no cover - lifespan always runs first
         raise RuntimeError("engine not initialised; is the app running?")
     return _engine
+
+
+def get_embedding_stem() -> FsPath:
+    """`data/embeddings` beside the database. An override point for tests."""
+    return FsPath(settings.db_path).parent / "embeddings"
 
 
 def get_s2_client() -> S2Client:

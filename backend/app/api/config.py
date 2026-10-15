@@ -140,6 +140,11 @@ def update_config(
     )
 
 
+def active_weights() -> dict[str, float]:
+    """A copy of the runtime weights, for callers that rescore on their own."""
+    return dict(_active)
+
+
 def reset_active_weights() -> None:
     """
     Restore the file's weights. **For tests**, which share a process and would
@@ -151,4 +156,4 @@ def reset_active_weights() -> None:
     _overridden = False
 
 
-__all__ = ["Weights", "reset_active_weights", "router"]
+__all__ = ["Weights", "active_weights", "reset_active_weights", "router"]

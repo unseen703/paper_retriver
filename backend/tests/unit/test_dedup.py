@@ -260,3 +260,70 @@ def test_every_key_is_hashable(paper_kwargs: dict[str, object]) -> None:
 def test_keys_are_stable_across_calls() -> None:
     paper = _paper(title="Deep Learning", year=2015, authors=(("a1", "Yann LeCun"),))
     assert canonical_key(paper) == canonical_key(paper)
+
+
+# --- R6.5: embedding-assisted duplicate candidates ---------------------------
+
+from app.services.dedup import duplicate_candidates, title_similarity  # noqa: E402
+from app.services.embeddings import EmbeddingStore  # noqa: E402
+
+
+def _store(vecs: dict[int, list[float]]) -> EmbeddingStore:
+    s = EmbeddingStore(dim=3)
+    for pid, v in vecs.items():
+        assert s.put(pid, v, "h")
+    return s
+
+
+def test_near_identical_vector_and_title_is_a_candidate() -> None:
+    s = _store({1: [1, 0, 0], 2: [1, 0.01, 0]})
+    got = duplicate_candidates(
+        s,
+        {
+            1: "Pre-training of Deep Bidirectional Transformers",
+            2: "Pretraining of deep bidirectional transformers",
+        },
+    )
+    assert [(c.a, c.b) for c in got] == [(1, 2)]
+    assert got[0].cosine > 0.97 and got[0].title_similarity >= 0.85
+
+
+def test_similar_vector_but_different_title_is_not() -> None:
+    s = _store({1: [1, 0, 0], 2: [1, 0.01, 0]})
+    assert (
+        duplicate_candidates(
+            s, {1: "Attention Is All You Need", 2: "Graph Neural Networks for Molecules"}
+        )
+        == []
+    )
+
+
+def test_similar_title_but_distant_vector_is_not() -> None:
+    s = _store({1: [1, 0, 0], 2: [0, 1, 0]})
+    assert duplicate_candidates(s, {1: "Deep Learning", 2: "Deep Learning"}) == []
+
+
+def test_papers_without_vector_or_title_are_ignored() -> None:
+    s = _store({1: [1, 0, 0], 2: [1, 0, 0]})
+    assert duplicate_candidates(s, {1: "Same Title", 3: "Same Title"}) == []
+    assert duplicate_candidates(s, {}) == []
+    assert duplicate_candidates(_store({}), {1: "x"}) == []
+
+
+def test_order_is_cosine_desc_then_ids_and_independent_of_input_order() -> None:
+    vecs = {3: [1, 0.2, 0], 1: [1, 0, 0], 2: [1, 0.2, 0], 4: [1, 0.001, 0]}
+    titles = {i: "Same Paper Title Here" for i in vecs}
+    a = duplicate_candidates(_store(vecs), titles, cosine_min=0.9)
+    b = duplicate_candidates(
+        _store(dict(reversed(vecs.items()))), dict(reversed(titles.items())), cosine_min=0.9
+    )
+    assert a == b
+    assert [(c.a, c.b) for c in a][0] == (2, 3)  # identical vectors: cosine 1.0 first
+    keys = [(-c.cosine, c.a, c.b) for c in a]
+    assert keys == sorted(keys)
+
+
+def test_title_similarity_edges() -> None:
+    assert title_similarity("", "") == 0.0
+    assert title_similarity("Attention Is All You Need", "attention is all you need!") == 1.0
+    assert title_similarity("Attention Is All You Need", "Attention Is Not All You Need") < 1.0

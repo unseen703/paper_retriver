@@ -29,6 +29,7 @@ click is a log that lies about what the user did.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from sqlalchemy import Engine
@@ -37,6 +38,7 @@ from app.models import GraphNode
 from app.repo import events as events_repo
 from app.repo import graph as graph_repo
 from app.services.gc import gc_sweep
+from app.services.scoring import rescore_after_label
 from app.services.transitions import TransitionError, plan_transition
 
 logger = logging.getLogger(__name__)
@@ -66,9 +68,21 @@ class LabelResult:
     rescored_count: int = 0
 
 
-def apply_label(engine: Engine, session_id: int, paper_id: int, target: str) -> LabelResult:
+def apply_label(
+    engine: Engine,
+    session_id: int,
+    paper_id: int,
+    target: str,
+    *,
+    weights: Mapping[str, float] | None = None,
+    as_of_year: int | None = None,
+) -> LabelResult:
     """
     Move one node to `target`, or raise.
+
+    With `weights` and `as_of_year` the session is re-ranked afterwards (R5.4),
+    in a second transaction: the label is the user's act and must stand even if
+    scoring fails, whereas a stale score is repaired by the next label or PUT.
 
     Raises `NodeNotInSession` (404) or `TransitionError` (409) -- the two
     refusals mean different things and the caller maps them to different codes.
@@ -134,9 +148,13 @@ def apply_label(engine: Engine, session_id: int, paper_id: int, target: str) -> 
     logger.info(
         "label_changed session=%s paper_id=%s %s -> %s", session_id, paper_id, node.state, target
     )
-    # rescored_count is 0 until R3: no feature set exists to rescore against,
-    # and reporting a fabricated number would be worse than reporting none.
-    return LabelResult(node=updated, swept=swept, rescored_count=0)
+    rescored = 0
+    if weights is not None and as_of_year is not None:
+        rescored = rescore_after_label(engine, session_id, weights, as_of_year)
+        with engine.connect() as conn:
+            refreshed = graph_repo.get_node(conn, session_id, paper_id)
+        updated = refreshed or updated
+    return LabelResult(node=updated, swept=swept, rescored_count=rescored)
 
 
 __all__ = ["LabelResult", "NodeNotInSession", "TransitionError", "apply_label"]

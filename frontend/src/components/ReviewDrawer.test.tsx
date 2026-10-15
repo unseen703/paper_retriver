@@ -188,4 +188,63 @@ describe("ReviewDrawer", () => {
 
     await waitFor(() => expect(onSelect).toHaveBeenCalledWith(9));
   });
+
+  it("lists probable duplicates on their own tab, fetched only when opened", async () => {
+    const fetchMock = vi.fn(async (url: string) =>
+      url.includes("/api/duplicates")
+        ? ({
+            ok: true,
+            status: 200,
+            json: async () => ({
+              total: 2,
+              pairs: [
+                {
+                  a: { id: 1, title: "Attention Is All You Need", year: 2017, citation_count: 9 },
+                  b: { id: 2, title: "Attention is all you need", year: 2017 },
+                  cosine: 0.9876,
+                  title_similarity: 1,
+                },
+              ],
+            }),
+          } as Response)
+        : ({ ok: true, status: 200, json: async () => review() } as Response),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <ReviewDrawer sessionId={1} onClose={() => {}} />
+      </QueryClientProvider>,
+    );
+    const drawer = await screen.findByRole("dialog", { name: /review/i });
+    expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/duplicates"))).toBe(false);
+
+    fireEvent.click(screen.getByRole("tab", { name: /duplicates/i }));
+    await waitFor(() => expect(drawer).toHaveTextContent("cosine 0.988"));
+    expect(drawer).toHaveTextContent("Attention Is All You Need");
+    expect(drawer).toHaveTextContent(/showing 1 of 2/i);
+    expect(screen.queryByRole("button", { name: /restore/i })).not.toBeInTheDocument();
+  });
+
+  it("says an empty duplicates tab may just mean no embeddings", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        ({
+          ok: true,
+          status: 200,
+          json: async () => (url.includes("/api/duplicates") ? { total: 0, pairs: [] } : review()),
+        }) as Response,
+      ),
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <ReviewDrawer sessionId={1} onClose={() => {}} />
+      </QueryClientProvider>,
+    );
+    const drawer = await screen.findByRole("dialog", { name: /review/i });
+    fireEvent.click(screen.getByRole("tab", { name: /duplicates/i }));
+    await waitFor(() => expect(drawer).toHaveTextContent(/no embeddings are stored/i));
+  });
 });

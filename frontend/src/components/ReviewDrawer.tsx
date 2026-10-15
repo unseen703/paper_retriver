@@ -26,9 +26,10 @@
  */
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, type ReviewBucketOut } from "../api/client";
+import { api, type DuplicatePairOut, type ReviewBucketOut } from "../api/client";
 
 type TabKey = "quarantined" | "rejected" | "removed";
+type ViewKey = TabKey | "duplicates";
 
 const TABS: { key: TabKey; label: string; hint: string }[] = [
   {
@@ -39,6 +40,9 @@ const TABS: { key: TabKey; label: string; hint: string }[] = [
   { key: "rejected", label: "Rejected", hint: "The filter cascade refused these, with a reason." },
   { key: "removed", label: "Removed", hint: "You removed these, or the sweep collected them." },
 ];
+
+const DUPLICATES_HINT =
+  "Stored papers that look like one paper twice (embedding and title both agree). Review only — nothing is merged.";
 
 export interface ReviewDrawerProps {
   sessionId: number;
@@ -124,8 +128,57 @@ function Bucket({
   );
 }
 
+function DuplicatePaper({ paper }: { paper: DuplicatePairOut["a"] }) {
+  const meta = [paper.year, paper.venue].filter(Boolean).join(" · ");
+  return (
+    <span style={{ display: "block" }}>
+      {paper.title ?? `paper ${paper.id}`}
+      <span style={{ color: "var(--dim)" }}>
+        {meta ? ` · ${meta}` : ""}
+        {paper.citation_count != null ? ` · ${paper.citation_count} cites` : ""}
+      </span>
+    </span>
+  );
+}
+
+function Duplicates() {
+  const dups = useQuery({ queryKey: ["duplicates"], queryFn: () => api.duplicates() });
+  if (dups.isError) return <p style={{ color: "salmon", fontSize: 12 }}>Could not load duplicates.</p>;
+  if (!dups.data) return <p style={{ color: "var(--dim)", fontSize: 12 }}>Loading…</p>;
+  if (dups.data.total === 0) {
+    return (
+      <p style={{ color: "var(--dim)", fontSize: 12, margin: "10px 0" }}>
+        No probable duplicates — or no embeddings are stored yet, which looks the same from here.
+      </p>
+    );
+  }
+  return (
+    <>
+      <ul style={{ listStyle: "none", padding: 0, margin: "8px 0 0", fontSize: 12 }}>
+        {dups.data.pairs.map((pair) => (
+          <li
+            key={`${pair.a.id}-${pair.b.id}`}
+            style={{ padding: "6px 0", borderTop: "1px solid var(--line, #2d3748)" }}
+          >
+            <DuplicatePaper paper={pair.a} />
+            <DuplicatePaper paper={pair.b} />
+            <code style={{ color: "var(--dim)", fontSize: 11 }}>
+              cosine {pair.cosine.toFixed(3)} · title {pair.title_similarity.toFixed(2)}
+            </code>
+          </li>
+        ))}
+      </ul>
+      {dups.data.total > dups.data.pairs.length && (
+        <p style={{ color: "var(--dim)", fontSize: 11, margin: "8px 0 0" }}>
+          Showing {dups.data.pairs.length} of {dups.data.total}.
+        </p>
+      )}
+    </>
+  );
+}
+
 export function ReviewDrawer({ sessionId, onClose, onSelect }: ReviewDrawerProps) {
-  const [tab, setTab] = useState<TabKey>("rejected");
+  const [tab, setTab] = useState<ViewKey>("rejected");
   const [restoringId, setRestoringId] = useState<number | null>(null);
   const queryClient = useQueryClient();
 
@@ -147,7 +200,8 @@ export function ReviewDrawer({ sessionId, onClose, onSelect }: ReviewDrawerProps
     onSettled: () => setRestoringId(null),
   });
 
-  const current: ReviewBucketOut | undefined = review.data?.[tab];
+  const current: ReviewBucketOut | undefined =
+    tab === "duplicates" ? undefined : review.data?.[tab];
 
   return (
     <aside
@@ -189,16 +243,28 @@ export function ReviewDrawer({ sessionId, onClose, onSelect }: ReviewDrawerProps
             {label} ({review.data ? review.data[key].total : "…"})
           </button>
         ))}
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "duplicates"}
+          title={DUPLICATES_HINT}
+          onClick={() => setTab("duplicates")}
+          style={{ fontWeight: tab === "duplicates" ? 600 : 400 }}
+        >
+          Duplicates
+        </button>
       </div>
 
       <p style={{ color: "var(--dim)", fontSize: 11, margin: "0 0 4px" }}>
-        {TABS.find((t) => t.key === tab)?.hint}
+        {tab === "duplicates" ? DUPLICATES_HINT : TABS.find((t) => t.key === tab)?.hint}
       </p>
 
-      {review.isError && <p style={{ color: "salmon", fontSize: 12 }}>Could not load the review.</p>}
-      {!review.data && !review.isError && (
+      {tab !== "duplicates" && review.isError && <p style={{ color: "salmon", fontSize: 12 }}>Could not load the review.</p>}
+      {tab !== "duplicates" && !review.data && !review.isError && (
         <p style={{ color: "var(--dim)", fontSize: 12 }}>Loading…</p>
       )}
+
+      {tab === "duplicates" && <Duplicates />}
 
       {current && (
         <Bucket

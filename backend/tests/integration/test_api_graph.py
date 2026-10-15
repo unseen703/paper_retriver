@@ -177,8 +177,29 @@ def test_a_node_carries_the_documented_fields(
         "paper_type",
         "in_degree",
         "out_degree",
+        "community_id",
         "pos",
     }
+
+
+def test_the_community_is_null_until_the_detector_has_run(
+    client: TestClient, two_node_graph: tuple[int, int]
+) -> None:
+    assert _graph(client)["nodes"][0]["community_id"] is None  # type: ignore[index]
+
+
+def test_a_persisted_community_is_returned(client: TestClient, engine: Engine) -> None:
+    paper_id = _paper(engine, "c", "Clustered")
+    _node(engine, paper_id)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE graph_nodes SET community_id = 3"
+                " WHERE session_id = :sid AND paper_id = :pid"
+            ),
+            {"sid": SID, "pid": paper_id},
+        )
+    assert _graph(client)["nodes"][0]["community_id"] == 3  # type: ignore[index]
 
 
 def test_an_edge_carries_the_documented_fields(

@@ -274,6 +274,9 @@ export function toElementData(node: GraphNodeOut, years: YearRange) {
     // "belongs to no group" rather than guessing one.
     category: node.primary_arxiv_category ?? null,
     title: node.title,
+    // Null when community detection has not run or the node is unassigned;
+    // the layout reads that as "no cluster", never as cluster 0.
+    communityId: node.community_id ?? null,
   };
 }
 

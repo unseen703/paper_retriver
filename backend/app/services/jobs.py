@@ -38,6 +38,7 @@ import logging
 import threading
 from collections.abc import Callable
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import Engine
@@ -45,6 +46,7 @@ from sqlalchemy import Engine
 from app.clients.s2 import S2Client
 from app.config import FiltersConfig, RankingConfig
 from app.repo import expansions as expansions_repo
+from app.services.embeddings import EmbeddingStore
 from app.services.expansion import ExpandParams, expand
 
 logger = logging.getLogger(__name__)
@@ -78,8 +80,12 @@ class JobWorker:
         filters_cfg: FiltersConfig,
         ranking_cfg: RankingConfig,
         loop: asyncio.AbstractEventLoop,
+        embedding_stem: Path | None = None,
     ) -> None:
         self._engine = engine
+        # Where `embed-backfill` writes. Loaded per job, so a backfill run while
+        # the server is up takes effect on the next expansion.
+        self._embedding_stem = embedding_stem
         # A factory rather than a client, so a test's `dependency_overrides`
         # reaches background work too. Resolving it once at construction would
         # leave the worker as the only place in the process that could still
@@ -195,6 +201,11 @@ class JobWorker:
                     self._ranking,
                     datetime.now(UTC).year,
                     expansion_id=job_id,
+                    embeddings=(
+                        EmbeddingStore.load(self._embedding_stem)
+                        if self._embedding_stem is not None
+                        else None
+                    ),
                 ),
                 self._loop,
             )
