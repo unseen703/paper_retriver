@@ -319,6 +319,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/duplicates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Duplicates
+         * @description Pairs ordered `(-cosine, a, b)`; `total` is the whole set, not the page.
+         */
+        get: operations["list_duplicates_api_duplicates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions/{sid}/expansions": {
         parameters: {
             query?: never;
@@ -492,6 +512,38 @@ export interface components {
         CreateSessionRequest: {
             /** Name */
             name: string;
+        };
+        /**
+         * DuplicatePairOut
+         * @description Two stored papers that look like one paper twice. `a.id < b.id`.
+         */
+        DuplicatePairOut: {
+            a: components["schemas"]["DuplicatePaperOut"];
+            b: components["schemas"]["DuplicatePaperOut"];
+            /** Cosine */
+            cosine: number;
+            /** Title Similarity */
+            title_similarity: number;
+        };
+        /** DuplicatePaperOut */
+        DuplicatePaperOut: {
+            /** Id */
+            id: number;
+            /** Title */
+            title?: string | null;
+            /** Year */
+            year?: number | null;
+            /** Venue */
+            venue?: string | null;
+            /** Citation Count */
+            citation_count?: number | null;
+        };
+        /** DuplicatesResponse */
+        DuplicatesResponse: {
+            /** Pairs */
+            pairs: components["schemas"]["DuplicatePairOut"][];
+            /** Total */
+            total: number;
         };
         /**
          * ExpandRequest
@@ -1838,6 +1890,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CandidatesResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_duplicates_api_duplicates_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DuplicatesResponse"];
                 };
             };
             /** @description Validation Error */
