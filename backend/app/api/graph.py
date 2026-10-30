@@ -42,6 +42,7 @@ from app.repo import graph as graph_repo
 from app.repo import papers as papers_repo
 from app.schemas.graph import (
     ClearGraphResponse,
+    CommunityLabel,
     GraphEdgeOut,
     GraphMeta,
     GraphNodeOut,
@@ -55,6 +56,7 @@ from app.schemas.graph import (
     SavePositionsResponse,
     StatsResponse,
 )
+from app.services.cluster_labels import label_communities
 from app.services.review import DEFAULT_LIMIT, MAX_LIMIT, ReviewBucket, build_review
 from app.services.stats import compute_stats
 
@@ -114,6 +116,7 @@ def get_graph(
         in_degree[edge.cited_id] = in_degree.get(edge.cited_id, 0) + 1
 
     out_nodes: list[GraphNodeOut] = []
+    titles_by_community: dict[int, list[str | None]] = {}
     non_stub = 0
     for node in nodes:
         paper = papers.get(node.paper_id)
@@ -124,6 +127,8 @@ def get_graph(
             continue
         if paper.crawl_state.value != "STUB":
             non_stub += 1
+        if node.community_id is not None:
+            titles_by_community.setdefault(node.community_id, []).append(paper.title)
         out_nodes.append(
             GraphNodeOut(
                 id=node.paper_id,
@@ -155,6 +160,10 @@ def get_graph(
             node_count=len(out_nodes),
             edge_count=len(edges),
             config_version=filters.config_version,
+            community_labels=[
+                CommunityLabel(community_id=cid, label=label)
+                for cid, label in sorted(label_communities(titles_by_community).items())
+            ],
             # Zero over zero is 1.0, not 0.0: an empty graph is not "completely
             # uncrawled", and reporting 0.0 would have R3 suppress a PageRank
             # column that has nothing to suppress.

@@ -202,6 +202,35 @@ def test_a_persisted_community_is_returned(client: TestClient, engine: Engine) -
     assert _graph(client)["nodes"][0]["community_id"] == 3  # type: ignore[index]
 
 
+def test_community_labels_are_empty_until_the_detector_has_run(
+    client: TestClient, two_node_graph: tuple[int, int]
+) -> None:
+    assert _graph(client)["meta"]["community_labels"] == []  # type: ignore[index]
+
+
+def test_each_community_is_labelled_from_its_own_titles(client: TestClient, engine: Engine) -> None:
+    titles = {
+        "a": ("Contrastive pretraining", 0),
+        "b": ("Contrastive objectives", 0),
+        "c": ("Sparse attention kernels", 1),
+    }
+    for key, (title, community) in titles.items():
+        pid = _paper(engine, key, title)
+        _node(engine, pid)
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE graph_nodes SET community_id = :c"
+                    " WHERE session_id = :sid AND paper_id = :pid"
+                ),
+                {"c": community, "sid": SID, "pid": pid},
+            )
+    labels = _graph(client)["meta"]["community_labels"]  # type: ignore[index]
+    assert [entry["community_id"] for entry in labels] == [0, 1]
+    assert labels[0]["label"].startswith("contrastive")
+    assert "contrastive" not in labels[1]["label"]
+
+
 def test_an_edge_carries_the_documented_fields(
     client: TestClient, two_node_graph: tuple[int, int]
 ) -> None:

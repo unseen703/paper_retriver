@@ -64,6 +64,13 @@ class GraphEdgeOut(BaseModel):
     is_influential: bool = False
 
 
+class CommunityLabel(BaseModel):
+    """The TF-IDF title terms naming one community (R6.7)."""
+
+    community_id: int
+    label: str
+
+
 class GraphMeta(BaseModel):
     """What the client needs to caveat what it is showing."""
 
@@ -72,6 +79,10 @@ class GraphMeta(BaseModel):
     # Which filter config produced this graph -- the first question when the
     # recommendations look wrong.
     config_version: str
+    #: One entry per community present in the returned nodes, ordered by id.
+    #: Empty until the detector has run; a community with no usable title term
+    #: is listed with an empty label rather than omitted.
+    community_labels: list[CommunityLabel] = Field(default_factory=list)
     crawl_completeness: float = Field(
         ge=0.0,
         le=1.0,
