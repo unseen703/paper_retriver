@@ -481,6 +481,16 @@ export interface components {
             cleared: number;
         };
         /**
+         * CommunityLabel
+         * @description The TF-IDF title terms naming one community (R6.7).
+         */
+        CommunityLabel: {
+            /** Community Id */
+            community_id: number;
+            /** Label */
+            label: string;
+        };
+        /**
          * ConfigResponse
          * @description The active weights, and where they came from.
          */
@@ -657,6 +667,8 @@ export interface components {
             edge_count: number;
             /** Config Version */
             config_version: string;
+            /** Community Labels */
+            community_labels?: components["schemas"]["CommunityLabel"][];
             /**
              * Crawl Completeness
              * @description |non-stub| / |nodes|. PLAN.md section I: PageRank over a partially crawled graph is biased, so R3 suppresses that column below 0.6.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MIN_HULL_NODES, communityHulls, convexHull } from "./communityHulls";
+import { MIN_HULL_NODES, communityHulls, convexHull, hullLabels, type Hull } from "./communityHulls";
 
 describe("convexHull", () => {
   it("drops interior and collinear points", () => {
@@ -56,5 +56,37 @@ describe("communityHulls", () => {
   it("returns one hull per community, ordered by id", () => {
     const hulls = communityHulls([...tri(7, 100), ...tri(2)]);
     expect(hulls.map((h) => h.communityId)).toEqual([2, 7]);
+  });
+});
+
+describe("hullLabels", () => {
+  const hull = (communityId: number): Hull => ({
+    communityId,
+    points: [
+      { x: 0, y: 0 },
+      { x: 6, y: 0 },
+      { x: 0, y: 3 },
+    ],
+  });
+
+  it("anchors a label at the mean of the outline", () => {
+    const out = hullLabels([hull(1)], new Map([[1, "graph neural"]]));
+    expect(out).toEqual([{ communityId: 1, text: "graph neural", x: 2, y: 1 }]);
+  });
+
+  it("skips empty, blank and unknown names instead of drawing blanks", () => {
+    const names = new Map([
+      [1, ""],
+      [2, "   "],
+    ]);
+    expect(hullLabels([hull(1), hull(2), hull(3)], names)).toEqual([]);
+  });
+
+  it("keeps hull order", () => {
+    const names = new Map([
+      [5, "b"],
+      [2, "a"],
+    ]);
+    expect(hullLabels([hull(2), hull(5)], names).map((l) => l.communityId)).toEqual([2, 5]);
   });
 });

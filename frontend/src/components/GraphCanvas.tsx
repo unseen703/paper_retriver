@@ -22,7 +22,7 @@
 import { useEffect, useRef } from "react";
 import cytoscape from "cytoscape";
 import fcose from "cytoscape-fcose";
-import { communityHulls } from "./communityHulls";
+import { communityHulls, hullLabels } from "./communityHulls";
 import cola from "cytoscape-cola";
 import type { GraphEdgeOut, GraphNodeOut } from "../api/client";
 import {
@@ -161,6 +161,8 @@ export interface GraphCanvasProps {
    * selection rather than owning it.
    */
   onPositions?: (positions: SavedPosition[]) => void;
+  /** TF-IDF names for communities (`meta.community_labels`), drawn on the hulls. */
+  communityLabels?: { community_id: number; label: string }[];
 }
 
 export function GraphCanvas({
@@ -179,8 +181,13 @@ export function GraphCanvas({
   onPositions,
   onVisibleCount,
   onMatchCount,
+  communityLabels,
 }: GraphCanvasProps) {
   const container = useRef<HTMLDivElement>(null);
+  // A ref, not an effect dependency: the instance must not be rebuilt when the
+  // names change. The next render event picks the new map up.
+  const hullNamesRef = useRef<ReadonlyMap<number, string>>(new Map());
+  hullNamesRef.current = new Map((communityLabels ?? []).map((c) => [c.community_id, c.label]));
   const cy = useRef<cytoscape.Core | null>(null);
   // Held in refs so the mount effect never lists them as dependencies; a new
   // inline callback each render would otherwise tear down and rebuild the
@@ -507,6 +514,11 @@ export function GraphCanvas({
         ctx.stroke();
         ctx.fill();
       }
+      ctx.font = "600 12px system-ui, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "rgba(60, 60, 70, 0.75)";
+      for (const l of hullLabels(hulls, hullNamesRef.current)) ctx.fillText(l.text, l.x, l.y);
     };
     instance.on("render", drawHulls);
 

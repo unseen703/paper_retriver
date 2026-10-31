@@ -69,3 +69,37 @@ export function communityHulls(nodes: readonly HullInput[]): Hull[] {
   }
   return hulls;
 }
+
+/** Where a hull's name is drawn: the mean of its outline, and the name to draw. */
+export interface HullLabel {
+  readonly communityId: number;
+  readonly text: string;
+  readonly x: number;
+  readonly y: number;
+}
+
+/**
+ * One label per hull that has a non-empty name, in hull order.
+ *
+ * The anchor is the mean of the outline points. A community with no usable
+ * title term arrives with an empty label (the API lists it rather than
+ * omitting it), and is skipped here rather than drawn as a blank.
+ */
+export function hullLabels(
+  hulls: readonly Hull[],
+  names: ReadonlyMap<number, string>,
+): HullLabel[] {
+  const labels: HullLabel[] = [];
+  for (const hull of hulls) {
+    const text = (names.get(hull.communityId) ?? "").trim();
+    if (text === "" || hull.points.length === 0) continue;
+    let x = 0;
+    let y = 0;
+    for (const p of hull.points) {
+      x += p.x;
+      y += p.y;
+    }
+    labels.push({ communityId: hull.communityId, text, x: x / hull.points.length, y: y / hull.points.length });
+  }
+  return labels;
+}
