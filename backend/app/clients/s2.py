@@ -68,6 +68,11 @@ NEIGHBOR_FIELDS = (
     "fieldsOfStudy,authors"
 )
 
+# R6.1. UNVERIFIED against the live API (docs/s2-api-notes.md, re-verify #1):
+# whether the batch endpoint serves `embedding.specter_v2`. `get_embeddings`
+# degrades to an empty result when it does not, rather than raising.
+EMBEDDING_FIELDS = "paperId,embedding.specter_v2"
+
 # S2 documents 500 ids per POST /paper/batch. Smaller chunks mean one bad id
 # poisons less, and a chunk failure costs less to retry.
 BATCH_SIZE = 100
@@ -101,6 +106,12 @@ class S2Author(BaseModel):
     hIndex: int | None = None
 
 
+class S2Embedding(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    model: str | None = None
+    vector: list[float] | None = None
+
+
 class S2Paper(BaseModel):
     model_config = ConfigDict(extra="ignore")
     paperId: str | None = None
@@ -117,6 +128,7 @@ class S2Paper(BaseModel):
     publicationTypes: list[str] | None = None
     fieldsOfStudy: list[str] | None = None
     authors: list[S2Author] = Field(default_factory=list)
+    embedding: S2Embedding | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -417,6 +429,35 @@ class S2Client:
                     papers.append(paper)
         return papers
 
+    async def get_embeddings(self, s2_ids: list[str]) -> dict[str, list[float]]:
+        """
+        S2 paper id -> SPECTER2 vector, for the ids S2 actually has one for.
+
+        Same batching and failure policy as `get_papers`. A paper with no
+        embedding is simply absent from the result -- never an error.
+        """
+        out: dict[str, list[float]] = {}
+        for start in range(0, len(s2_ids), self._batch_size):
+            chunk = s2_ids[start : start + self._batch_size]
+            try:
+                payload = await self._request(
+                    "POST",
+                    "/paper/batch",
+                    params={"fields": EMBEDDING_FIELDS},
+                    json_body={"ids": chunk},
+                )
+            except S2TransientError as exc:
+                logger.warning("embedding batch of %d ids failed, skipping: %s", len(chunk), exc)
+                continue
+            for raw in payload or []:
+                if not raw:
+                    continue
+                paper = S2Paper.model_validate(raw)
+                vec = paper.embedding.vector if paper.embedding else None
+                if paper.paperId and vec:
+                    out[paper.paperId] = vec
+        return out
+
     async def get_references(self, s2_id: str, limit: int = 200) -> list[EdgeRecord]:
         return await self._edges(s2_id, "references", "citedPaper", limit)
 
@@ -530,6 +571,7 @@ __all__ = [
     "BATCH_SIZE",
     "BASE_URL",
     "CachedOnlyS2Client",
+    "EMBEDDING_FIELDS",
     "NEIGHBOR_FIELDS",
     "SEARCH_FIELDS",
     "CacheMiss",

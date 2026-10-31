@@ -440,3 +440,27 @@ export function partitionByTopic(
   }
   return { matched, rest };
 }
+
+/** Spring length between two nodes of the same community (PLAN.md, R6). */
+export const INTRA_COMMUNITY_EDGE_LENGTH = 45;
+/** Spring length between nodes of different communities. */
+export const INTER_COMMUNITY_EDGE_LENGTH = 220;
+
+/**
+ * fcose's `idealEdgeLength` for one edge, given its endpoints' communities.
+ *
+ * Short inside a cluster and long across clusters, so communities read as
+ * regions. An endpoint with no community (`null`/`undefined`) falls back to
+ * `fallback` -- the pre-R6 constant -- rather than being treated as its own
+ * cluster: an unassigned node is not evidence of a boundary.
+ */
+export function idealEdgeLength(
+  sourceCommunity: number | null | undefined,
+  targetCommunity: number | null | undefined,
+  fallback: number,
+): number {
+  if (sourceCommunity == null || targetCommunity == null) return fallback;
+  return sourceCommunity === targetCommunity
+    ? INTRA_COMMUNITY_EDGE_LENGTH
+    : INTER_COMMUNITY_EDGE_LENGTH;
+}

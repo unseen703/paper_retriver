@@ -289,6 +289,11 @@ def set_authors(conn: Connection, paper_id: int, authors: list[tuple[str, str]])
         )
 
 
+def list_ids(conn: Connection) -> list[int]:
+    """Every paper id, ascending. Global, like the rest of this module."""
+    return [row[0] for row in conn.execute(text("SELECT id FROM papers ORDER BY id"))]
+
+
 def get_papers_by_ids(conn: Connection, ids: list[int]) -> list[Paper]:
     """
     Returns papers in the order requested; unknown ids are skipped.

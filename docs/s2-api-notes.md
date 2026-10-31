@@ -111,7 +111,7 @@ Assume the same trap applies to any other nested field (`embedding.*`,
 
 ## Things to re-verify when convenient ⚠️
 
-1. Whether `embedding.specter_v2` is served on the batch endpoint (matters at R6).
+1. Whether `embedding.specter_v2` is served on the batch endpoint (matters at R6). `EMBEDDING_FIELDS` in `clients/s2.py` assumes `embedding.specter_v2` returns `{model, vector}`; unchecked live as of R6.1.
 2. The exact max ids per `POST /paper/batch` (500 assumed).
 3. Whether `/paper/{id}/references` still caps `limit` at 1000.
 4. Current `publicationTypes` vocabulary — `type_filter.py` (R1.5) keys off it.

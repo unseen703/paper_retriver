@@ -28,6 +28,8 @@ export type JobAccepted = components["schemas"]["JobAccepted"];
 export type JobStatus = components["schemas"]["JobStatus"];
 export type JobCancelled = components["schemas"]["JobCancelled"];
 export type NodePosition = components["schemas"]["NodePosition"];
+export type DuplicatesResponse = components["schemas"]["DuplicatesResponse"];
+export type DuplicatePairOut = components["schemas"]["DuplicatePairOut"];
 export type StatsResponse = components["schemas"]["StatsResponse"];
 export type CandidatesResponse = components["schemas"]["CandidatesResponse"];
 export type CandidateOut = components["schemas"]["CandidateOut"];
@@ -196,6 +198,8 @@ export const api = {
     request<ReviewResponse>(`/api/sessions/${sid}/review?limit=${limit}`),
 
   /** Bring a tombstoned paper back as a CANDIDATE (R2.8). */
+  duplicates: (limit = 50) => request<DuplicatesResponse>(`/api/duplicates?limit=${limit}`),
+
   restore: (sid: number, paperId: number) =>
     request<NodeResponse>(`/api/sessions/${sid}/nodes/${paperId}/restore`, { method: "POST" }),
 

@@ -31,7 +31,12 @@ from app.repo import papers as papers_repo
 from app.services.budget import allocate
 from app.services.candidates import build_pool, prescore
 from app.services.categories import CategoryResolver
+from app.services.communities import refresh_communities
+from app.services.embedding_pool import embedding_only_entries
+from app.services.embeddings import EmbeddingStore, rank_by_similarity
+from app.services.exemplars import build_applied_stage
 from app.services.features import compute_and_store_features
+from app.services.fusion import fuse_pool
 from app.services.ingest import IngestStats, ingest_neighbour
 
 logger = logging.getLogger(__name__)
@@ -80,6 +85,7 @@ async def expand(
     ranking_cfg: RankingConfig,
     as_of_year: int,
     expansion_id: int | None = None,
+    embeddings: EmbeddingStore | None = None,
 ) -> ExpansionResult:
     """
     Run one expansion for `session_id`. Never raises on budget exhaustion.
@@ -93,6 +99,8 @@ async def expand(
     result = ExpansionResult()
     # One resolver for the run: enrich() is a single bulk query per batch.
     resolver = CategoryResolver(engine)
+    with engine.connect() as conn:
+        applied = build_applied_stage(conn, session_id, embeddings, filters_cfg.config_version)
     calls_at_start = client.api_calls
     hits_at_start = client.cache_hits
 
@@ -194,6 +202,7 @@ async def expand(
                         result.ingest,
                         admit=False,
                         resolver=resolver,
+                        applied=applied,
                     )
         if result.truncated:
             break
@@ -218,8 +227,39 @@ async def expand(
         # (9)-(10) Rank by prescore, then allocate. R1 uses prescore as the
         # final ranking; real features arrive at R3.
         scored = [(entry, prescore(entry, filters_cfg)) for entry in pool]
+        # R6.13: with vectors in the store, selection ranks on graph prescore
+        # fused with similarity to the anchors. No store, or too few vectors,
+        # leaves `scored` untouched.
+        budget_cfg = ranking_cfg.budget
+        if embeddings is not None and len(embeddings):
+            # `score_floor` is written on the prescore scale (see allocate), and
+            # an RRF score is ~0.03, so a floor applied after fusion would
+            # refuse everything. Apply it here, on prescore, and hand allocate
+            # a copy with the floor already spent.
+            pool_ids = {e.paper_id for e in pool}
+            scored = [c for c in scored if c[1] >= budget_cfg.score_floor]
+            # R6.18: papers the graph never reached, admitted only if the
+            # cascade accepts them. Added *after* the floor: the floor reads
+            # "how many anchors must agree", and this channel has none by
+            # construction. The budget still caps how many are taken.
+            extra = embedding_only_entries(
+                conn,
+                session_id,
+                embeddings,
+                anchors,
+                pool_ids,
+                filters_cfg,
+                as_of_year,
+                resolver=resolver,
+                applied=applied,
+            )
+            scored += [(entry, prescore(entry, filters_cfg)) for entry in extra]
+            result.n_pool += len(extra)
+            ranking = rank_by_similarity(embeddings, anchors, (c[0].paper_id for c in scored))
+            scored = fuse_pool(scored, ranking)
+            budget_cfg = budget_cfg.model_copy(update={"score_floor": float("-inf")})
         room = max(0, params.max_nodes - len(graph_repo.get_node_ids(conn, session_id)))
-        selected = allocate(scored, ranking_cfg.budget, min(params.max_new, room))
+        selected = allocate(scored, budget_cfg, min(params.max_new, room))
         if room < params.max_new and pool:
             result.truncated = True
             result.error = result.error or f"max_nodes of {params.max_nodes} reached"
@@ -262,6 +302,15 @@ async def expand(
         compute_and_store_features(engine, session_id, as_of_year)
     except Exception:  # noqa: BLE001 - a scoring failure must not cost the fetch
         logger.exception("feature_pass_failed session=%s", session_id)
+
+    # (13) Communities (R6.6), same contract as (12): derived from the whole
+    # graph, so recomputed whole, and never fatal -- a stale or missing id only
+    # costs the cluster hints, not the papers.
+    try:
+        with engine.begin() as conn:
+            refresh_communities(conn, session_id)
+    except Exception:  # noqa: BLE001 - clustering must not cost the fetch
+        logger.exception("community_pass_failed session=%s", session_id)
 
     return _finish(engine, session_id, result, None)
 

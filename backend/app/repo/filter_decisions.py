@@ -77,6 +77,25 @@ def record(
     )
 
 
+def clear_session_stage(
+    conn: Connection, session_id: int, paper_id: int, config_version: str, stage: str
+) -> None:
+    """Drop this session's own verdict for one stage, leaving global rows alone."""
+    conn.execute(
+        text(
+            "DELETE FROM filter_decisions"
+            " WHERE paper_id = :paper_id AND session_id = :session_id"
+            "   AND config_version = :config_version AND stage = :stage"
+        ),
+        {
+            "paper_id": paper_id,
+            "session_id": session_id,
+            "config_version": config_version,
+            "stage": str(stage),
+        },
+    )
+
+
 def find_global_rejection(
     conn: Connection, paper_id: int, config_version: str
 ) -> FilterDecision | None:
@@ -152,6 +171,25 @@ def non_accepted_paper_ids(conn: Connection, session_id: int, config_version: st
     return {row[0] for row in rows}
 
 
+def global_paper_ids_by_reason(
+    conn: Connection, config_version: str, reason_codes: list[str]
+) -> set[int]:
+    """Papers carrying a global, non-ACCEPT verdict with one of `reason_codes`."""
+    if not reason_codes:
+        return set()
+    binds = {f"r{i}": code for i, code in enumerate(sorted(reason_codes))}
+    marks = ", ".join(f":{k}" for k in binds)
+    rows = conn.execute(
+        text(
+            "SELECT DISTINCT paper_id FROM filter_decisions"
+            " WHERE session_id IS NULL AND outcome != 'ACCEPT'"
+            f"   AND config_version = :config_version AND reason_code IN ({marks})"
+        ),
+        {"config_version": config_version, **binds},
+    )
+    return {row[0] for row in rows}
+
+
 def count_by_reason(conn: Connection, session_id: int | None = None) -> list[tuple[str, str, int]]:
     """(outcome, reason_code, n) for R2.14's review drawer."""
     rows = conn.execute(
@@ -166,6 +204,7 @@ def count_by_reason(conn: Connection, session_id: int | None = None) -> list[tup
 
 
 __all__ = [
+    "clear_session_stage",
     "count_by_reason",
     "find_global_rejection",
     "non_accepted_paper_ids",

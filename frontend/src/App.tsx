@@ -312,6 +312,7 @@ export default function App() {
           onVisibleCount={handleVisible}
           onMatchCount={handleMatches}
           onPositions={handlePositions}
+          communityLabels={graph.data?.meta.community_labels}
         />
 
           <p style={hintStyle}>drag to move · scroll to zoom · hover to trace · click to inspect</p>

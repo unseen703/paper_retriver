@@ -356,3 +356,62 @@ def test_undirected_pagerank_is_offered_as_a_bias_diagnostic(engine: Engine) -> 
     graph.edge("a", "b").edge("b", "a")
     signals = graph.signals()
     assert signals.undirected_pagerank[graph.ids["a"]] == pytest.approx(0.5, abs=1e-6)  # type: ignore[attr-defined]
+
+
+# --------------------------------------------------------------------------
+# R5 -- personalized PageRank
+# --------------------------------------------------------------------------
+
+
+def _ppr(engine: Engine, graph: Graph, *anchors: str) -> dict[int, float]:
+    with engine.connect() as conn:
+        signals = compute_signals(conn, SID, [graph.ids[a] for a in anchors])
+    return signals.personalized_pagerank
+
+
+def _chain(engine: Engine) -> Graph:
+    """seed - near - mid - far, a path; every paper crawled."""
+    graph = Graph(engine)
+    for name in ("seed", "near", "mid", "far"):
+        graph.node(name)
+    graph.edge("near", "seed").edge("mid", "near").edge("far", "mid")
+    return graph
+
+
+def test_ppr_mass_decays_with_distance_from_the_restart_set(engine: Engine) -> None:
+    graph = _chain(engine)
+    ppr = _ppr(engine, graph, "seed")
+    ids = graph.ids
+    # `near` outranks `seed` itself: it has two neighbours, so the walk returns to it
+    # more often. Mass still falls off with distance beyond that.
+    assert ppr[ids["near"]] > ppr[ids["mid"]] > ppr[ids["far"]]
+    assert ppr[ids["seed"]] > ppr[ids["far"]]
+    assert sum(ppr.values()) == pytest.approx(1.0)
+
+
+def test_ppr_reaches_papers_that_cite_the_anchor(engine: Engine) -> None:
+    """A directed walk strands a paper that only cites the seed; the projection does not."""
+    graph = Graph(engine).node("seed").node("citer")
+    graph.edge("citer", "seed")
+    assert _ppr(engine, graph, "seed")[graph.ids["citer"]] > 0.0
+
+
+def test_ppr_is_deterministic(engine: Engine) -> None:
+    graph = _chain(engine)
+    assert _ppr(engine, graph, "seed") == _ppr(engine, graph, "seed")
+
+
+def test_ppr_is_absent_without_anchors_rather_than_uniform(engine: Engine) -> None:
+    assert _ppr(engine, _chain(engine)) == {}
+
+
+def test_ppr_ignores_an_anchor_that_is_a_stub(engine: Engine) -> None:
+    graph = Graph(engine).node("stub", crawled=False).node("a")
+    assert _ppr(engine, graph, "stub") == {}
+
+
+def test_ppr_is_suppressed_with_the_rest_of_pagerank(engine: Engine) -> None:
+    graph = Graph(engine).node("seed")
+    for i in range(5):
+        graph.node(f"s{i}", crawled=False)
+    assert _ppr(engine, graph, "seed") == {}

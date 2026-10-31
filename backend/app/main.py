@@ -30,6 +30,7 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -38,6 +39,7 @@ from sqlalchemy import Engine, text
 from app.api import deps
 from app.api.candidates import router as candidates_router
 from app.api.config import router as config_router
+from app.api.duplicates import router as duplicates_router
 from app.api.expansions import router as expansions_router
 from app.api.graph import router as graph_router
 from app.api.node_detail import router as node_detail_router
@@ -115,6 +117,8 @@ def create_app(db_url: str | None = None) -> FastAPI:
             filters,
             ranking,
             asyncio.get_running_loop(),
+            # Same location `embed-backfill` writes; absent files mean no fusion.
+            embedding_stem=Path(settings.db_path).parent / "embeddings",
         )
         deps.set_runtime(engine, client, worker)
         worker.start()
@@ -151,6 +155,7 @@ def create_app(db_url: str | None = None) -> FastAPI:
     application.include_router(node_detail_router)
     application.include_router(graph_router)
     application.include_router(candidates_router)
+    application.include_router(duplicates_router)
     application.include_router(expansions_router)
 
     @application.get("/api/health", response_model=HealthResponse)

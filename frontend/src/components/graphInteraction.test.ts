@@ -21,6 +21,7 @@ import { describe, expect, it } from "vitest";
 import type { GraphNodeOut } from "../api/client";
 import {
   clampThreshold,
+  idealEdgeLength,
   navigableNodes,
   nodeRepulsion,
   partitionByQuery,
@@ -494,5 +495,23 @@ describe("separateOverlaps", () => {
     for (const p of out.values()) {
       expect(Number.isFinite(p.x) && Number.isFinite(p.y)).toBe(true);
     }
+  });
+});
+
+describe("idealEdgeLength (R6.9)", () => {
+  it("is short inside a community and long across communities", () => {
+    expect(idealEdgeLength(2, 2, 95)).toBe(45);
+    expect(idealEdgeLength(2, 3, 95)).toBe(220);
+  });
+
+  it("treats community 0 as a real community, not as unassigned", () => {
+    expect(idealEdgeLength(0, 0, 95)).toBe(45);
+    expect(idealEdgeLength(0, 1, 95)).toBe(220);
+  });
+
+  it("falls back when either endpoint has no community", () => {
+    expect(idealEdgeLength(null, 1, 95)).toBe(95);
+    expect(idealEdgeLength(1, undefined, 95)).toBe(95);
+    expect(idealEdgeLength(null, null, 95)).toBe(95);
   });
 });
